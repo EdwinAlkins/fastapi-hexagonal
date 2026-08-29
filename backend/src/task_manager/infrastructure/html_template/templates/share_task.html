@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tâche partagée</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f2;
+      font-family: Georgia, 'Times New Roman', serif;
+      color: #1a1a1a;
+      -webkit-text-size-adjust: 100%;
+    "
+  >
+    <table
+      role="presentation"
+      width="100%"
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      style="background-color: #f4f4f2; padding: 32px 16px"
+    >
+      <tr>
+        <td align="center">
+          <table
+            role="presentation"
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            style="
+              max-width: 560px;
+              background-color: #ffffff;
+              border: 1px solid #e4e4e0;
+            "
+          >
+            <!-- En-tête -->
+            <tr>
+              <td style="padding: 28px 32px 8px; border-bottom: 1px solid #e4e4e0">
+                <p
+                  style="
+                    margin: 0;
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    font-size: 12px;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: #6b6b66;
+                  "
+                >
+                  Task Manager
+                </p>
+                <h1
+                  style="
+                    margin: 12px 0 0;
+                    font-size: 22px;
+                    font-weight: normal;
+                    line-height: 1.3;
+                    color: #1a1a1a;
+                  "
+                >
+                  Une tâche vous a été partagée
+                </h1>
+              </td>
+            </tr>
+
+            <!-- Intro -->
+            <tr>
+              <td style="padding: 24px 32px 8px">
+                <p
+                  style="
+                    margin: 0;
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    font-size: 15px;
+                    line-height: 1.55;
+                    color: #333330;
+                  "
+                >
+                  <strong style="font-weight: 600">{owner_email}</strong>
+                  a partagé une tâche avec vous.
+                </p>
+                <p
+                  style="
+                    margin: 16px 0 0;
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    font-size: 15px;
+                    line-height: 1.55;
+                    color: #333330;
+                  "
+                >
+                  {message_body}
+                </p>
+              </td>
+            </tr>
+
+            <!-- Détails tâche -->
+            <tr>
+              <td style="padding: 16px 32px 28px">
+                <table
+                  role="presentation"
+                  width="100%"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  style="
+                    background-color: #fafaf8;
+                    border: 1px solid #e4e4e0;
+                  "
+                >
+                  <tr>
+                    <td style="padding: 20px 22px">
+                      <p
+                        style="
+                          margin: 0 0 4px;
+                          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                          font-size: 11px;
+                          letter-spacing: 0.06em;
+                          text-transform: uppercase;
+                          color: #6b6b66;
+                        "
+                      >
+                        Titre
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 18px;
+                          font-size: 18px;
+                          line-height: 1.35;
+                          color: #1a1a1a;
+                        "
+                      >
+                        {task_title}
+                      </p>
+
+                      <p
+                        style="
+                          margin: 0 0 4px;
+                          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                          font-size: 11px;
+                          letter-spacing: 0.06em;
+                          text-transform: uppercase;
+                          color: #6b6b66;
+                        "
+                      >
+                        Statut
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 18px;
+                          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                          font-size: 14px;
+                          line-height: 1.4;
+                          color: #1a1a1a;
+                        "
+                      >
+                        {task_status}
+                      </p>
+
+                      <p
+                        style="
+                          margin: 0 0 4px;
+                          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                          font-size: 11px;
+                          letter-spacing: 0.06em;
+                          text-transform: uppercase;
+                          color: #6b6b66;
+                        "
+                      >
+                        Description
+                      </p>
+                      <p
+                        style="
+                          margin: 0 0 18px;
+                          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                          font-size: 14px;
+                          line-height: 1.55;
+                          color: #333330;
+                          white-space: pre-wrap;
+                        "
+                      >
+                        {task_description}
+                      </p>
+
+                      <table
+                        role="presentation"
+                        width="100%"
+                        cellpadding="0"
+                        cellspacing="0"
+                        border="0"
+                      >
+                        <tr>
+                          <td width="50%" valign="top" style="padding-right: 8px">
+                            <p
+                              style="
+                                margin: 0 0 4px;
+                                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                                font-size: 11px;
+                                letter-spacing: 0.06em;
+                                text-transform: uppercase;
+                                color: #6b6b66;
+                              "
+                            >
+                              Créée le
+                            </p>
+                            <p
+                              style="
+                                margin: 0;
+                                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                                font-size: 13px;
+                                color: #1a1a1a;
+                              "
+                            >
+                              {task_created_at}
+                            </p>
+                          </td>
+                          <td width="50%" valign="top" style="padding-left: 8px">
+                            <p
+                              style="
+                                margin: 0 0 4px;
+                                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                                font-size: 11px;
+                                letter-spacing: 0.06em;
+                                text-transform: uppercase;
+                                color: #6b6b66;
+                              "
+                            >
+                              Terminée le
+                            </p>
+                            <p
+                              style="
+                                margin: 0;
+                                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                                font-size: 13px;
+                                color: #1a1a1a;
+                              "
+                            >
+                              {task_completed_at}
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Pied -->
+            <tr>
+              <td
+                style="
+                  padding: 0 32px 28px;
+                  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                  font-size: 12px;
+                  line-height: 1.5;
+                  color: #8a8a84;
+                "
+              >
+                Cet e-mail a été envoyé automatiquement par Task Manager.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

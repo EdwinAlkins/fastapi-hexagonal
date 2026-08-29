@@ -1,0 +1,46 @@
+# RabbitMQ géré par le RabbitMQ Cluster Operator (remplace le StatefulSet manuel).
+# 3 nœuds en cluster. Le nom `rabbitmq` est conservé → le Service reste `rabbitmq`
+# (l'app garde amqp://…@rabbitmq:5672/).
+#
+# L'opérateur officiel (v2.15.0) génère :
+#   - le Service `rabbitmq` (5672 AMQP, 15672 management, 15692 metrics) ;
+#   - le secret `rabbitmq-default-user` (clés username/password) → consommé par
+#     l'api et le worker ;
+#   - les pods `rabbitmq-server-{0,1,2}`.
+#
+# Anti-affinité : Répartit les nœuds sur des workers distincts (cohérent avec CNPG).
+# Documentation: https://www.rabbitmq.com/kubernetes/operator/operator-overview.html
+# Version de la CRD : v2.15.0
+# Vérifié avec: kubectl explain rabbitmqcluster.spec
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbitmq
+  namespace: task-manager
+spec:
+  replicas: 3
+  
+  # Anti-affinité : champ natif supporté par la CRD v2.15.0
+  # Vérifié via: kubectl explain rabbitmqcluster.spec.affinity
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: rabbitmq
+  
+  service:
+    type: ClusterIP
+    
+  persistence:
+    storage: 1Gi
+    
+  resources:
+    requests:
+      cpu: 100m
+      memory: 600Mi
+    limits:
+      memory: 600Mi

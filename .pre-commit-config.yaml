@@ -1,0 +1,56 @@
+# Filet de sécurité local, exécuté avant chaque commit.
+#
+# Installation (une fois) :  cd backend && uv run pre-commit install
+# Exécution manuelle :       cd backend && uv run pre-commit run --all-files
+#
+# Les hooks Python réutilisent les outils épinglés dans backend/pyproject.toml via
+# `uv run` (aucune divergence de version avec `make lint`). Ils sont scopés à
+# `backend/` : ce dépôt est full-stack (un `frontend/` a ses propres outils).
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint + autofix)
+        entry: bash -c 'cd backend && uv run ruff check --fix'
+        language: system
+        types_or: [python, pyi]
+        files: ^backend/
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: bash -c 'cd backend && uv run ruff format'
+        language: system
+        types_or: [python, pyi]
+        files: ^backend/
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy (strict)
+        entry: bash -c 'cd backend && uv run mypy'
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false
+
+      # Contrats d'architecture (import-linter) : empilement des couches +
+      # domaine sans framework. Vérifie le vrai graphe d'imports.
+      - id: import-linter
+        name: contrats d'imports (archi hexagonale)
+        entry: bash -c 'cd backend && uv run lint-imports'
+        language: system
+        types: [python]
+        files: ^backend/src/
+        pass_filenames: false

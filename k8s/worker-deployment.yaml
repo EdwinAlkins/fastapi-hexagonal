@@ -1,0 +1,74 @@
+# Worker d'envoi d'e-mails. Même image que l'API ; seule la commande change.
+# Reprend le bloc `worker` du compose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-worker
+  namespace: task-manager
+spec:
+  replicas: 2                     # scale horizontal selon la charge d'e-mails
+  selector:
+    matchLabels: { app: mail-worker }
+  template:
+    metadata:
+      labels: { app: mail-worker }
+    spec:
+      # Durcissement : UID non-root + seccomp par défaut (image sans USER).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Anti-affinité « préférée » : répartit les 2 workers sur des nœuds distincts.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app: mail-worker }
+      containers:
+      - name: worker
+        image: task-manager-api:latest
+        imagePullPolicy: IfNotPresent   # image chargée via `kind load`, pas de registry
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        command: ["python", "-m", "task_manager.presentation.worker"]
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        # Secrets d'abord : ils sont référencés par les URLs ci-dessous.
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: task-manager-db-app, key: password }
+        # Credentials générés par l'opérateur RabbitMQ (secret rabbitmq-default-user).
+        - name: RABBITMQ_USER
+          valueFrom:
+            secretKeyRef: { name: rabbitmq-default-user, key: username }
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: rabbitmq-default-user, key: password }
+        # URLs interpolées : $(VAR) n'est expansé que dans un env[].value.
+        - name: APP_DATABASE_URL
+          value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-pooler:5432/task_manager?prepared_statement_cache_size=0"
+        - name: APP_RABBITMQ_URL
+          value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/"
+        envFrom:
+        - configMapRef: { name: api-config }
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: { cpu: 128m, memory: 128Mi }
+          limits: { cpu: 500m, memory: 256Mi }
+      volumes:
+      - name: tmp
+        emptyDir: {}

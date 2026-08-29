@@ -1,0 +1,216 @@
+# Dépendances d'infrastructure : Valkey, RabbitMQ, Mailpit, Prometheus.
+# Équivalents des services compose du même nom.
+# ---------------------------------------------------------------------------
+# Valkey (cache — parle le protocole Redis)
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  namespace: task-manager
+spec:
+  serviceName: valkey
+  replicas: 1
+  selector:
+    matchLabels: { app: valkey }
+  template:
+    metadata:
+      labels: { app: valkey }
+    spec:
+      containers:
+      - name: valkey
+        image: valkey/valkey:8-alpine
+        args: ["valkey-server", "--appendonly", "yes"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+        # Dimensionné via `kubectl top` (idle ~4m / 3Mi).
+        resources:
+          requests: { cpu: 25m, memory: 16Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+        readinessProbe:
+          exec: { command: ["valkey-cli", "ping"] }
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: valkey-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: task-manager
+spec:
+  selector: { app: valkey }
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+# ---------------------------------------------------------------------------
+# RabbitMQ (broker) - géré par le RabbitMQ Cluster Operator
+# Le cluster est défini dans rabbitmq.yaml (RabbitmqCluster CRD)
+# L'opérateur génère automatiquement le Service rabbitmq (5672, 15672, 15692)
+# et le secret rabbitmq-default-user avec les identifiants.
+# ---------------------------------------------------------------------------
+# Mailpit (SMTP de test + webmail)
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: task-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailpit }
+  template:
+    metadata:
+      labels: { app: mailpit }
+    spec:
+      containers:
+      - name: mailpit
+        image: axllent/mailpit:latest
+        ports:
+        - { containerPort: 1025, name: smtp }
+        - { containerPort: 8025, name: ui }
+        # Dimensionné via `kubectl top` (idle ~0m / 8Mi).
+        resources:
+          requests: { cpu: 10m, memory: 24Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: task-manager
+spec:
+  selector: { app: mailpit }
+  ports:
+  - { port: 1025, targetPort: 1025, name: smtp }
+  - { port: 8025, targetPort: 8025, name: ui }
+---
+# ---------------------------------------------------------------------------
+# Prometheus (scrape api:8000/metrics)
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: task-manager
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      - job_name: task-manager-api
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["api:8000"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: task-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v3.1.0
+        ports:
+        - containerPort: 9090
+        # Dimensionné via `kubectl top` (idle ~1m / 19Mi).
+        resources:
+          requests: { cpu: 25m, memory: 48Mi }
+          limits: { cpu: 200m, memory: 128Mi }
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: task-manager
+spec:
+  selector: { app: prometheus }
+  ports:
+  - port: 9090
+    targetPort: 9090
+---
+# ---------------------------------------------------------------------------
+# RedisInsight (console d'inspection du cache Valkey) — outil de dev.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redisinsight
+  namespace: task-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redisinsight }
+  template:
+    metadata:
+      labels: { app: redisinsight }
+    spec:
+      containers:
+      - name: redisinsight
+        image: redis/redisinsight:latest
+        ports:
+        - containerPort: 5540
+        env:
+        # Pré-enregistre la connexion à Valkey (protocole Redis).
+        - name: RI_REDIS_HOST
+          value: "valkey"
+        - name: RI_REDIS_PORT
+          value: "6379"
+        - name: RI_REDIS_ALIAS
+          value: "valkey-cache"
+        # Sans clé de chiffrement, RedisInsight tente le trousseau système
+        # (absent de l'image) et la connexion pré-enregistrée échoue en silence.
+        - name: RI_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef: { name: app-secrets, key: REDISINSIGHT_ENCRYPTION_KEY }
+        - name: RI_ACCEPT_TERMS_AND_CONDITIONS
+          value: "true"
+        # Dimensionné via `kubectl top` (idle ~1m / 102Mi).
+        resources:
+          requests: { cpu: 25m, memory: 128Mi }
+          limits: { cpu: 200m, memory: 256Mi }
+        volumeMounts:
+        - name: ri-data
+          mountPath: /data
+      volumes:
+      - name: ri-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redisinsight
+  namespace: task-manager
+spec:
+  selector: { app: redisinsight }
+  ports:
+  - port: 5540
+    targetPort: 5540

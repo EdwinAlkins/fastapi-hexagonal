@@ -1,0 +1,34 @@
+# Cluster Kind multi-nœuds : 1 control-plane + 3 workers.
+# Objectif : répartir les instances Postgres (et les autres workloads) sur des
+# nœuds distincts, et tester la perte d'un nœud (drain).
+#
+# ⚠️ Ces « nœuds » sont des conteneurs Docker sur la MÊME machine. Kind simule
+# la topologie multi-nœuds (anti-affinité, reschedule, drain), pas la redondance
+# matérielle — si l'hôte/Docker tombe, tout tombe ensemble.
+#
+# Seul le control-plane porte le mapping des ports 80/443 + le label
+# `ingress-ready` : l'Ingress Controller s'y schedule (nodeSelector), et c'est
+# ce nœud qui expose l'appli sur localhost.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: task-manager
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    # listenAddress: "0.0.0.0"
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 443
+    # listenAddress: "0.0.0.0"
+    protocol: TCP
+- role: worker
+- role: worker
+- role: worker

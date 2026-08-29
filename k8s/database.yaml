@@ -1,0 +1,60 @@
+# PostgreSQL géré par CloudNativePG + PgBouncer via un Pooler.
+# Remplace les services `postgres` et `pgbouncer` du docker-compose.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: task-manager-db
+  namespace: task-manager
+spec:
+  # 1 primaire + 2 réplicas (streaming replication). Sur crash du primaire,
+  # l'opérateur promeut automatiquement le réplica le plus à jour (failover).
+  instances: 3
+  # Anti-affinité STRICTE : chaque instance sur un nœud distinct (1 par worker).
+  # `required` garantit la répartition → la perte d'un nœud n'emporte qu'UNE
+  # instance, les 2 autres continuent (failover auto). Nécessite ≥ 3 nœuds
+  # schedulables (on a 3 workers) ; sinon une instance resterait Pending.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+  storage:
+    size: 1Gi
+  bootstrap:
+    initdb:
+      database: task_manager
+      owner: task_manager
+  # CNPG génère le secret `task-manager-db-app` (clés username/password/…).
+  # Réplication asynchrone (défaut) : priorité à la disponibilité et à la
+  # latence. Pour un RPO ≈ 0 (durabilité maximale), décommenter le bloc
+  # ci-dessous — au prix d'écritures qui bloquent si trop peu de réplicas
+  # sont disponibles :
+  # postgresql:
+  #   synchronous:
+  #     method: any
+  #     number: 1
+---
+# PgBouncer natif CNPG, en mode transaction (aligné sur le compose).
+# Crée un Service `task-manager-pooler` (⚠️ pas de suffixe -rw ; le -rw
+# appartient au Cluster et sert aux migrations DDL en direct).
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: task-manager-pooler
+  namespace: task-manager
+spec:
+  cluster:
+    name: task-manager-db
+  # 2 pods PgBouncer derrière le Service `task-manager-pooler` (load-balancés).
+  # PgBouncer est stateless → montée en charge horizontale sans risque, pas de
+  # SPOF sur le pooler. ⚠️ default_pool_size est PAR pod : 2×20 = 40 connexions
+  # serveur max vers le primaire (< max_connections=100 de Postgres).
+  # (Anti-affinité entre poolers : à ajouter via spec.template en multi-nœuds ;
+  # inutile sur Kind mono-nœud, et le webhook CNPG exige alors un template
+  # complet — on s'en passe ici.)
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: transaction        # PGBOUNCER_POOL_MODE
+    parameters:
+      max_client_conn: "1000"    # PGBOUNCER_MAX_CLIENT_CONN
+      default_pool_size: "20"    # PGBOUNCER_DEFAULT_POOL_SIZE

@@ -1,0 +1,32 @@
+# PodDisruptionBudget : pendant un drain / rolling update volontaire,
+# au moins 1 pod reste disponible pour chaque workload.
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: task-manager
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: api }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: task-manager
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: frontend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mail-worker
+  namespace: task-manager
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: mail-worker }

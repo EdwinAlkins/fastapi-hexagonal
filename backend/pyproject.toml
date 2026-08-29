@@ -1,0 +1,114 @@
+[project]
+name = "fastapi-clean"
+version = "0.1.0"
+description = "Template FastAPI — architecture hexagonale, DDD & Craftsmanship (SQLAlchemy async, PostgreSQL, Pydantic)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.31",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "email-validator>=2.3.0",
+    "redis[hiredis]>=8.0.1",
+    "orjson>=3.11.9",
+    "aiosmtplib>=5.1.2",
+    "aio-pika>=10.0.1",
+    "gunicorn>=26.0.0",
+    "alembic>=1.18.5",
+    "prometheus-fastapi-instrumentator>=8.0.2",
+    "click>=8.4.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.27",
+    "testcontainers>=4.9",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+    "import-linter>=2.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/task_manager"]
+
+[project.scripts]
+task-manager-cli = "task_manager.presentation.cli.app:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["task_manager"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["task_manager"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# La couverture est un indicateur, pas une barrière : le seuil reste indicatif.
+skip_covered = false
+
+[tool.pylint.typecheck]
+extension-pkg-allow-list = ["orjson"]
+
+# import-linter : la règle de dépendance de l'archi hexagonale, vérifiée sur le
+# vrai graphe d'imports (`uv run lint-imports`). Plus robuste qu'un grep : suit
+# les imports réels, sans faux positif sur les `.pyc`.
+[tool.importlinter]
+root_package = "task_manager"
+# Requis pour le contrat « forbidden » ci-dessous : les modules interdits sont
+# des paquets externes (fastapi, sqlalchemy…), il faut donc les inclure au graphe.
+include_external_packages = true
+
+# Empilement des couches : chaque couche ne peut importer que celles *en dessous*.
+# presentation → infrastructure → application → domain. Interdit donc, entre
+# autres, qu'application connaisse l'infrastructure, ou que le domaine remonte
+# vers quoi que ce soit (« tout pointe vers l'intérieur »).
+[[tool.importlinter.contracts]]
+name = "Architecture hexagonale (dépendances vers l'intérieur)"
+type = "layers"
+layers = [
+    "task_manager.presentation",
+    "task_manager.infrastructure",
+    "task_manager.application",
+    "task_manager.domain",
+]
+
+# Le domaine reste pur : aucun framework ne doit y pénétrer (même en transitif).
+[[tool.importlinter.contracts]]
+name = "Domaine sans framework"
+type = "forbidden"
+source_modules = ["task_manager.domain"]
+forbidden_modules = [
+    "fastapi",
+    "sqlalchemy",
+    "pydantic",
+    "pydantic_settings",
+    "starlette",
+]

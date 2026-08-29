@@ -1,0 +1,247 @@
+name: full-stack-exemple
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      # transaction : une connexion serveur n'est tenue que le temps d'une
+      # transaction — le mode qui rend le pooling utile avec des workers Celery.
+      POOL_MODE: ${PGBOUNCER_POOL_MODE:-transaction}
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-1000}
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-20}
+      ADMIN_USERS: ${POSTGRES_USER}
+    ports:
+      # 6432 côté hôte pour ne pas entrer en conflit avec postgres.
+      - "${PGBOUNCER_PORT:-6432}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Broker autonome pour l'instant : le backend n'est pas encore branché dessus
+  # (Celery viendra dans un second temps).
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      # Console de management : http://localhost:15672
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    ports:
+      - "${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # Console d'inspection du cache : http://localhost:5540
+  # Les variables RI_REDIS_* pré-enregistrent la connexion à Valkey (l'UI parle
+  # le protocole Redis) — rien à saisir au premier lancement.
+  redisinsight:
+    image: redis/redisinsight:latest
+    environment:
+      RI_REDIS_HOST: valkey
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: valkey-cache
+      # Indispensable : sans clé de chiffrement, RedisInsight tente de passer
+      # par le trousseau système (keytar/libsecret), absent de l'image — la
+      # connexion pré-enregistrée échoue alors en silence.
+      RI_ENCRYPTION_KEY: ${REDISINSIGHT_ENCRYPTION_KEY}
+      # Le volume garde les données entre les runs : on évite de réafficher
+      # l'EULA à chaque `up`.
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+    ports:
+      - "${REDISINSIGHT_PORT:-5540}:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      # Webmail de test : http://localhost:8025
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+
+  # Collecte les métriques exposées par api sur /metrics
+  # (métriques HTTP par défaut + compteurs métier).
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./backend/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Console Prometheus : http://localhost:9090
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Applique les migrations Alembic avant api/worker (connexion directe Postgres).
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      # DDL : bypass PgBouncer (mode transaction inadapté aux migrations).
+      APP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      APP_INIT_DB: "false"
+      # Settings exige redis_url / rabbitmq_url même si Alembic n'en a pas besoin.
+      APP_REDIS_URL: ""
+      APP_RABBITMQ_URL: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    command:
+      [
+        "gunicorn",
+        "task_manager.main:app",
+        "-k",
+        "uvicorn.workers.UvicornWorker",
+        "--bind",
+        "0.0.0.0:8000",
+        "--workers",
+        "${API_WORKERS:-2}",
+      ]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file: .env
+    environment:
+      # asyncpg + pgbouncer en mode transaction : les prepared statements
+      # doivent être désactivés (la connexion serveur change à chaque transaction).
+      APP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:5432/${POSTGRES_DB}?prepared_statement_cache_size=0
+      # Schéma piloté par le service migrate (Alembic), pas par create_all.
+      APP_INIT_DB: "false"
+      # Cache applicatif (Valkey parle le protocole Redis).
+      APP_REDIS_URL: redis://valkey:6379/0
+      APP_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      APP_EXCHANGE_NAME: task_events
+      APP_SMTP_HOST: mailpit
+      APP_SMTP_PORT: "1025"
+      APP_CACHE_TTL: ${CACHE_TTL:-300}
+      REDIS_URL: redis://valkey:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      # python est présent dans l'image runtime (pas besoin de curl).
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health')
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Gunicorn démarre le master puis les workers : un peu plus long qu'uvicorn.
+      start_period: 15s
+
+  worker:
+    build: ./backend
+    command: ["python", "-m", "task_manager.presentation.worker"]
+    env_file: .env
+    environment:
+      APP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:5432/${POSTGRES_DB}?prepared_statement_cache_size=0
+      APP_INIT_DB: "false"
+      APP_REDIS_URL: redis://valkey:6379/0
+      APP_RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      APP_EXCHANGE_NAME: task_events
+      APP_SMTP_HOST: mailpit
+      APP_SMTP_PORT: "1025"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      # Préserve les node_modules de l'image malgré le bind-mount du code.
+      - frontend_node_modules:/app/node_modules
+    environment:
+      # Proxy Vite → API sur le réseau Docker (le navigateur appelle /api).
+      VITE_API_PROXY_TARGET: http://api:8000
+      VITE_MAIL_UI_URL: http://localhost:${MAILPIT_UI_PORT:-8025}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  valkey_data:
+  redisinsight_data:
+  frontend_node_modules:
+  prometheus_data:

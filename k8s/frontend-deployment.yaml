@@ -1,0 +1,65 @@
+# Frontend Preact servi par Nginx (image construite sur le stage `production`).
+# Le Nginx interne sert la SPA et proxifie /api/ vers l'API (frontend/nginx.conf).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: task-manager
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      # Durcissement : image nginx-unprivileged → tourne en non-root (uid 101).
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Anti-affinité « préférée » : répartit les 2 replicas sur des nœuds distincts.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app: frontend }
+      containers:
+      - name: frontend
+        image: task-manager-frontend:latest
+        imagePullPolicy: IfNotPresent   # image chargée via `kind load`, pas de registry
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        # nginx-unprivileged écrit pid + fichiers temp sous /tmp.
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: { cpu: 10m, memory: 24Mi }
+          limits: { cpu: 100m, memory: 64Mi }
+        readinessProbe:
+          httpGet: { path: /, port: 8080 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: task-manager
+spec:
+  selector: { app: frontend }
+  ports:
+  - port: 80
+    targetPort: 8080

@@ -1,0 +1,13 @@
+# Configuration Prometheus : scrape l'endpoint /metrics exposé par le service
+# api (prometheus_fastapi_instrumentator + compteurs métier custom).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: task-manager-api
+    metrics_path: /metrics
+    static_configs:
+      # Résolu sur le réseau Docker Compose (nom de service = hôte).
+      - targets: ["api:8000"]

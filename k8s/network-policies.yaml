@@ -1,0 +1,160 @@
+# Segmentation réseau (NetworkPolicy) — testé : kindnet applique bien ces règles.
+#
+# Principe : chaque cible a UNE politique d'ingress qui liste ses sources
+# autorisées ; tout le reste est implicitement refusé. Pas de default-deny
+# global (plus sûr avec les pods CNPG, sensibles à la réplication).
+#
+# Chaîne autorisée :  ingress-nginx → frontend → api → (pooler → postgres,
+#                     rabbitmq, valkey, mailpit).  Le frontend ne peut JAMAIS
+#                     parler directement à postgres/pooler.
+# (Politiques d'INGRESS uniquement → l'egress, dont le DNS, reste libre.)
+
+# --- Frontend : joignable seulement par l'Ingress Controller (port 8080) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-frontend, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: frontend } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    ports:
+    - { protocol: TCP, port: 8080 }
+---
+# --- API : joignable par le frontend (proxy /api) et Prometheus (/metrics) ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-api, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: api } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { app: frontend } }
+    - podSelector: { matchLabels: { app: prometheus } }
+    ports:
+    - { protocol: TCP, port: 8000 }
+---
+# --- Pooler PgBouncer : joignable par api + worker (5432), et l'opérateur CNPG.
+#     PAS par le frontend → c'est le cœur de la leçon. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-pooler, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { cnpg.io/podRole: pooler } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { app: api } }
+    - podSelector: { matchLabels: { app: mail-worker } }
+    ports:
+    - { protocol: TCP, port: 5432 }
+  # Opérateur CNPG (gestion du pooler).
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
+---
+# --- Postgres (instances CNPG) : joignable par le pooler, le Job de migration,
+#     les autres instances (réplication) et l'opérateur. PAS par le frontend. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-postgres, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+  policyTypes: [Ingress]
+  ingress:
+  # pooler, réplication inter-instances (tous deux ont le label cnpg.io/cluster),
+  # et le Job de migration (connexion directe à -rw).
+  - from:
+    - podSelector: { matchLabels: { cnpg.io/cluster: task-manager-db } }
+    - podSelector: { matchLabels: { job-name: db-migrate } }
+    ports:
+    - { protocol: TCP, port: 5432 }
+  # Opérateur CNPG (probes de statut, gestion) — tous ports.
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
+---
+# --- RabbitMQ (géré par l'opérateur, label app.kubernetes.io/name) :
+#     AMQP (5672) depuis api + worker ; UI (15672) depuis l'Ingress ; clustering
+#     inter-nœuds (epmd/dist) ; gestion par l'opérateur. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-rabbitmq, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: rabbitmq } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { app: api } }
+    - podSelector: { matchLabels: { app: mail-worker } }
+    ports:
+    - { protocol: TCP, port: 5672 }
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    ports:
+    - { protocol: TCP, port: 15672 }
+  # Clustering inter-nœuds RabbitMQ (epmd 4369, distribution 25672) — même label.
+  - from:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: rabbitmq } }
+  # Opérateur RabbitMQ (gestion du cluster).
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: rabbitmq-system } }
+---
+# --- Valkey : 6379 depuis api + worker + RedisInsight ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-valkey, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: valkey } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { app: api } }
+    - podSelector: { matchLabels: { app: mail-worker } }
+    - podSelector: { matchLabels: { app: redisinsight } }
+    ports:
+    - { protocol: TCP, port: 6379 }
+---
+# --- Mailpit : SMTP (1025) depuis api + worker ; UI (8025) depuis l'Ingress ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-mailpit, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: mailpit } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { app: api } }
+    - podSelector: { matchLabels: { app: mail-worker } }
+    ports:
+    - { protocol: TCP, port: 1025 }
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    ports:
+    - { protocol: TCP, port: 8025 }
+---
+# --- Prometheus : UI (9090) depuis l'Ingress ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-prometheus, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: prometheus } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    ports:
+    - { protocol: TCP, port: 9090 }
+---
+# --- RedisInsight : UI (5540) depuis l'Ingress ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-redisinsight, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: redisinsight } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    ports:
+    - { protocol: TCP, port: 5540 }

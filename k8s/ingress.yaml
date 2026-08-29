@@ -1,0 +1,20 @@
+# Point d'entrée unique : tout le trafic passe par le frontend Nginx, qui sert
+# la SPA et proxifie /api/ vers l'API (modèle de production du repo). Pas de
+# rewrite-target : le préfixe /api/v1 attendu par FastAPI est préservé.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: task-manager-ingress
+  namespace: task-manager
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80

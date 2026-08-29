@@ -1,0 +1,21 @@
+# Variables d'environnement STATIQUES partagées par l'API et le worker.
+# Reprend le bloc `api` du docker-compose.
+#
+# ⚠️ APP_DATABASE_URL et APP_RABBITMQ_URL ne sont PAS ici : elles contiennent
+# des $(VAR) à interpoler depuis les secrets, et Kubernetes n'expanse `$(VAR)`
+# QUE dans les `env[].value` d'un conteneur — jamais dans les valeurs injectées
+# via `envFrom` (ConfigMap/Secret). Ces deux URLs sont donc définies dans le
+# `env` de chaque Deployment (api / worker), après les vars secrètes référencées.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: task-manager
+data:
+  # Schéma piloté par le Job Alembic, pas par create_all.
+  APP_INIT_DB: "false"
+  APP_REDIS_URL: "redis://valkey:6379/0"
+  APP_EXCHANGE_NAME: "task_events"
+  APP_SMTP_HOST: "mailpit"
+  APP_SMTP_PORT: "1025"
+  APP_CACHE_TTL: "300"

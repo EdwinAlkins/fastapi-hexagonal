@@ -1,0 +1,5 @@
+.env
+resources/*
+
+# Dumps de base de données locaux
+db-backups/

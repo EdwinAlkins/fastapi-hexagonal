@@ -1,0 +1,54 @@
+# Applique le schéma Alembic AVANT l'API et le worker.
+# Équivalent du service `migrate` du compose : connexion DIRECTE à Postgres
+# (task-manager-db-rw), le mode transaction de PgBouncer étant inadapté au DDL.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: task-manager
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: migrate
+        image: task-manager-api:latest
+        imagePullPolicy: IfNotPresent   # image chargée via `kind load`, pas de registry
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        command: ["alembic", "upgrade", "head"]
+        env:
+        - name: HOME
+          value: /tmp
+        - name: TMPDIR
+          value: /tmp
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef: { name: task-manager-db-app, key: password }
+        # Bypass du pooler pour le DDL.
+        - name: APP_DATABASE_URL
+          value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-db-rw:5432/task_manager"
+        - name: APP_INIT_DB
+          value: "false"
+        # Settings exige ces URLs même si Alembic ne s'en sert pas.
+        - name: APP_REDIS_URL
+          value: ""
+        - name: APP_RABBITMQ_URL
+          value: ""
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
