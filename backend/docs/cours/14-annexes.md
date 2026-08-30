@@ -444,6 +444,16 @@ renverrait les e-mails aux destinataires qui les ont déjà reçus. On sépare d
 la seconde information. Sans ce `publish` explicite, ces échecs partiels seraient
 silencieusement perdus, puisqu'un message acquitté n'est jamais dead-letté.
 
+**4.** Non. Un seul consommateur (rien à découpler), un seul e-mail (rien à
+lisser), pas de pic (rien à tamponner) : les trois raisons d'avoir un broker
+tombent. Un `BackgroundTasks` FastAPI suffit, et t'épargne un composant avec état
+plus un processus worker. Ce que tu perds : la durabilité — si le processus
+redémarre entre la réponse HTTP et l'envoi, l'e-mail de bienvenue disparaît sans
+trace, alors qu'un message publié dans une file durable aurait survécu. Le bon
+réflexe est de le noter comme un compromis assumé, et de rebasculer sur le broker
+au premier des trois signaux qui apparaît — typiquement le deuxième consommateur
+(analytics, CRM) qui vient se greffer sur « un utilisateur vient d'être créé ».
+
 ### Chapitre 12
 
 **1.** Au niveau **domaine** : c'est une règle de validité du titre, donc dans

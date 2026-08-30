@@ -166,6 +166,111 @@ la raison pour laquelle le domaine reste testable en microsecondes.
 > dans la même transaction, le publier ensuite depuis un relais — est la réponse
 > standard. Ne pas l'avoir est un compromis assumé à cette échelle.
 
+### Alors, pourquoi un broker ?
+
+La section précédente justifie l'**absence** d'outbox. Le risque, c'est d'en tirer
+la conclusion symétrique et fausse : « si on tolère de perdre le message, autant
+appeler le SMTP directement dans le use case et supprimer RabbitMQ ». Ce sont deux
+questions distinctes :
+
+- **« Le message doit-il être durable et transactionnel ? »** → c'est la question
+  de l'outbox. Réponse ici : non.
+- **« Ce travail doit-il sortir de la requête HTTP ? »** → c'est la question du
+  broker. Réponse ici : oui.
+
+Un broker n'est pas là pour garantir qu'un message ne se perd pas — mal configuré,
+il en perd très bien. Il est là pour **découpler le rythme du producteur de celui
+du consommateur**, et pour découpler l'émetteur de la liste de ceux qui écoutent.
+Trois situations concrètes le rendent difficilement remplaçable.
+
+**1. Lisser la charge.** Partager une tâche avec 10 000 utilisateurs, c'est 10 000
+e-mails. Sans broker, la requête HTTP les envoie elle-même : elle tient une
+connexion, un worker applicatif et une transaction pendant toute la durée de
+l'opération, et ouvre autant de conversations SMTP que le fournisseur de mail
+accepte d'en encaisser avant de limiter le débit — ou de blacklister le domaine.
+Avec un broker, la file **est** le tampon : le producteur écrit un message et rend
+la main ; le consommateur avance à son rythme. Le levier est du côté du
+consommateur, pas de l'API :
+
+```python
+# presentation/worker/__main__.py
+await channel.set_qos(prefetch_count=10)
+```
+
+Ce `prefetch_count` plafonne le nombre de messages non acquittés qu'un worker
+accepte de garder en vol. C'est lui, et le nombre de workers, qui fixent le débit
+réel — pas le trafic entrant. Un pic de partages allonge la file, il ne fait pas
+tomber l'API.
+
+**2. Rattraper les échecs sans écrire de moteur de retry.** Le serveur SMTP est
+indisponible deux heures. Sans broker, il faut une table `email_retry`, un
+compteur de tentatives, un `next_attempt_at`, un cron qui la balaie, et la
+gestion des accès concurrents entre plusieurs instances. Avec un broker, la
+redélivrance et la mise à l'écart deviennent de la **configuration de file**
+([ch. 07](07-adaptateurs.md#le-worker-rabbitmq)) :
+
+```python
+queue = await channel.declare_queue(
+    "email_notifications",
+    durable=True,
+    arguments={"x-dead-letter-exchange": "email_notifications.dlx"},
+)
+```
+
+Une précision qui vaut d'être dite, parce qu'elle circule à l'envers : **RabbitMQ
+ne fait pas de backoff exponentiel tout seul.** Un message rejeté sans `requeue`
+part en dead-letter, point. Le délai croissant s'obtient par montage : une file
+d'attente par palier (`x-message-ttl` de 1 min, 5 min, 15 min) qui dead-lette vers
+l'exchange principal, ou le plugin `rabbitmq_delayed_message_exchange` pour tenir
+la même chose en un seul exchange. Deux pièges au passage : le TTL par message
+expire dans l'ordre de la file (un message à 15 min bloque derrière lui un message
+à 1 min), et il faut un compteur de tentatives pour ne pas boucler indéfiniment —
+sur une *quorum queue*, `x-delivery-limit` le fait pour toi. Ça reste bien moins
+de code qu'une table de retry maison, mais ce n'est pas gratuit.
+
+Dans ce projet la DLQ est volontairement un **terminus** : rien ne la consomme,
+elle sert à ce qu'un échec soit visible plutôt que silencieux. Le rejeu est un
+geste d'exploitation, pas une boucle automatique.
+
+**3. Un événement, plusieurs consommateurs.** C'est le cas qui tranche vraiment.
+Si `task.shared` doit, en plus de l'e-mail, alimenter un tableau de bord d'audit,
+pousser un webhook Slack et synchroniser un CRM, la version sans broker demande
+d'ouvrir le use case et d'y ajouter trois appels — donc de coupler `ShareTask` à
+trois systèmes tiers, avec leurs pannes et leurs latences. Avec un broker, on ne
+touche pas au producteur du tout : on déclare trois files de plus, chacune liée à
+l'exchange sur la même clé de routage, chacune avec son rythme, ses échecs et son
+propre déploiement.
+
+Ce projet publie sur un exchange `DIRECT` avec une seule file liée à
+`task.shared`. Passer à trois consommateurs, c'est trois `declare_queue` +
+`bind` dans trois workers ; `ShareTask` et `RabbitMQMessageAdapter` restent
+inchangés. **C'est ça, le découplage** : il ne se mesure pas au nombre de
+composants, mais au nombre de fichiers qu'un nouveau besoin oblige à rouvrir.
+
+### Et quand il n'est pas justifié
+
+Le broker n'est pas neutre : c'est un composant avec état à déployer, superviser,
+sécuriser et sauvegarder, plus un second processus (le worker) à faire vivre. Si
+les trois conditions suivantes sont réunies, il n'apporte rien :
+
+| Question | Si la réponse est… | Alors |
+|---|---|---|
+| Combien de consommateurs ? | **Un seul**, et il ne bougera pas | Le broker ne découple rien |
+| Combien de temps prend le travail ? | Quelques **millisecondes** | Le faire dans la requête est plus simple |
+| Y a-t-il des pics ? | Non, débit **régulier et faible** | Rien à lisser |
+
+Dans ce cas, un `BackgroundTasks` FastAPI ou une tâche `asyncio` suffit — avec sa
+propre limite, assumée : le travail meurt avec le processus, donc perte au premier
+redémarrage. Et si le besoin est seulement de *rattraper des écarts*, la
+réconciliation périodique évoquée au [chapitre 08](08-transactions-et-erreurs.md#en-a-t-on-vraiment-besoin-)
+coûte encore moins cher.
+
+Ici, RabbitMQ est justifié par le point 1 (l'envoi SMTP est lent et peut partir en
+rafale) et par le point 3 en puissance (l'exchange est déjà en place, un second
+consommateur ne coûte qu'un `bind`). Il l'est aussi, il faut le dire, parce que ce
+dépôt sert de démonstration : il montre un adaptateur driving non-HTTP, ce qu'aucun
+`BackgroundTasks` n'aurait illustré ([ch. 07](07-adaptateurs.md#le-worker-rabbitmq)).
+
 ## À retenir
 
 - Le **cache** est une décision applicative : contrat d'invalidation écrit,
@@ -177,6 +282,10 @@ la raison pour laquelle le domaine reste testable en microsecondes.
 - L'entité **enregistre** un événement, elle ne l'envoie pas.
 - Publier avant le commit est un compromis : le pattern **outbox** est la réponse
   quand ça devient inacceptable.
+- Un **broker** ne sert pas à garantir la livraison, mais à **lisser la charge**,
+  à externaliser les retries en configuration de file, et à laisser N consommateurs
+  s'abonner sans toucher au producteur. Aucun de ces trois besoins ? Une tâche de
+  fond suffit.
 
 ## À toi de jouer
 
@@ -188,5 +297,9 @@ la raison pour laquelle le domaine reste testable en microsecondes.
    geste, et que fais-tu avant ?
 3. Le worker échoue à envoyer un e-mail sur 3 destinataires. Où va l'information
    d'échec, et pourquoi le message principal est-il quand même acquitté ?
+4. On te demande d'envoyer un e-mail de bienvenue à la création d'un utilisateur :
+   un seul destinataire, un seul consommateur, aucun pic attendu. Faut-il passer
+   par RabbitMQ ? Justifie avec les trois questions de la section « Et quand il
+   n'est pas justifié », et nomme ce que tu perds dans l'option la plus simple.
 
 → [Corrigés](14-annexes.md#c-corrigés-des-exercices)

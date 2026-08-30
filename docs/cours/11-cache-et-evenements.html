@@ -287,6 +287,122 @@ microsecondes.</p>
   la réponse standard. Ne pas l'avoir est un compromis assumé à cette échelle.
 </div>
 
+<h3 id="alors-pourquoi-un-broker-">Alors, pourquoi un broker ?<a class="anchor" href="#alors-pourquoi-un-broker-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>La section précédente justifie l'<strong>absence</strong> d'outbox. Le risque,
+c'est d'en tirer la conclusion symétrique et fausse : « si on tolère de perdre le
+message, autant appeler le SMTP directement dans le use case et supprimer
+RabbitMQ ». Ce sont deux questions distinctes :</p>
+
+<ul>
+  <li><strong>« Le message doit-il être durable et transactionnel ? »</strong>
+      &rarr; c'est la question de l'outbox. Réponse ici : non.</li>
+  <li><strong>« Ce travail doit-il sortir de la requête HTTP ? »</strong> &rarr;
+      c'est la question du broker. Réponse ici : oui.</li>
+</ul>
+
+<p>Un broker n'est pas là pour garantir qu'un message ne se perd pas &mdash; mal
+configuré, il en perd très bien. Il est là pour <strong>découpler le rythme du
+producteur de celui du consommateur</strong>, et pour découpler l'émetteur de la
+liste de ceux qui écoutent. Trois situations concrètes le rendent difficilement
+remplaçable.</p>
+
+<p><strong>1. Lisser la charge.</strong> Partager une tâche avec 10 000
+utilisateurs, c'est 10 000 e-mails. Sans broker, la requête HTTP les envoie
+elle-même : elle tient une connexion, un worker applicatif et une transaction
+pendant toute la durée de l'opération, et ouvre autant de conversations SMTP que
+le fournisseur de mail accepte d'en encaisser avant de limiter le débit &mdash; ou
+de blacklister le domaine. Avec un broker, la file <strong>est</strong> le tampon :
+le producteur écrit un message et rend la main ; le consommateur avance à son
+rythme. Le levier est du côté du consommateur, pas de l'API :</p>
+
+<div class="snippet" data-lang="python"><pre><code># presentation/worker/__main__.py
+await channel.set_qos(prefetch_count=10)</code></pre></div>
+
+<p>Ce <code>prefetch_count</code> plafonne le nombre de messages non acquittés
+qu'un worker accepte de garder en vol. C'est lui, et le nombre de workers, qui
+fixent le débit réel &mdash; pas le trafic entrant. Un pic de partages allonge la
+file, il ne fait pas tomber l'API.</p>
+
+<p><strong>2. Rattraper les échecs sans écrire de moteur de retry.</strong> Le
+serveur SMTP est indisponible deux heures. Sans broker, il faut une table
+<code>email_retry</code>, un compteur de tentatives, un
+<code>next_attempt_at</code>, un cron qui la balaie, et la gestion des accès
+concurrents entre plusieurs instances. Avec un broker, la redélivrance et la mise
+à l'écart deviennent de la <strong>configuration de file</strong>
+(<a href="./07-adaptateurs.html#le-worker-rabbitmq">ch. 07</a>) :</p>
+
+<div class="snippet" data-lang="python"><pre><code>queue = await channel.declare_queue(
+    "email_notifications",
+    durable=True,
+    arguments={"x-dead-letter-exchange": "email_notifications.dlx"},
+)</code></pre></div>
+
+<div class="warn">
+  <strong>RabbitMQ ne fait pas de backoff exponentiel tout seul</strong>
+  <p>Un message rejeté sans <code>requeue</code> part en dead-letter, point. Le
+  délai croissant s'obtient par montage : une file d'attente par palier
+  (<code>x-message-ttl</code> de 1 min, 5 min, 15 min) qui dead-lette vers
+  l'exchange principal, ou le plugin
+  <code>rabbitmq_delayed_message_exchange</code> pour tenir la même chose en un
+  seul exchange. Deux pièges au passage : le TTL par message expire dans l'ordre
+  de la file (un message à 15 min bloque derrière lui un message à 1 min), et il
+  faut un compteur de tentatives pour ne pas boucler indéfiniment &mdash; sur une
+  <em>quorum queue</em>, <code>x-delivery-limit</code> le fait pour toi. Ça reste
+  bien moins de code qu'une table de retry maison, mais ce n'est pas gratuit.</p>
+</div>
+
+<p>Dans ce projet la DLQ est volontairement un <strong>terminus</strong> : rien ne
+la consomme, elle sert à ce qu'un échec soit visible plutôt que silencieux. Le
+rejeu est un geste d'exploitation, pas une boucle automatique.</p>
+
+<p><strong>3. Un événement, plusieurs consommateurs.</strong> C'est le cas qui
+tranche vraiment. Si <code>task.shared</code> doit, en plus de l'e-mail, alimenter
+un tableau de bord d'audit, pousser un webhook Slack et synchroniser un CRM, la
+version sans broker demande d'ouvrir le use case et d'y ajouter trois appels
+&mdash; donc de coupler <code>ShareTask</code> à trois systèmes tiers, avec leurs
+pannes et leurs latences. Avec un broker, on ne touche pas au producteur du tout :
+on déclare trois files de plus, chacune liée à l'exchange sur la même clé de
+routage, chacune avec son rythme, ses échecs et son propre déploiement.</p>
+
+<p>Ce projet publie sur un exchange <code>DIRECT</code> avec une seule file liée à
+<code>task.shared</code>. Passer à trois consommateurs, c'est trois
+<code>declare_queue</code> + <code>bind</code> dans trois workers ;
+<code>ShareTask</code> et <code>RabbitMQMessageAdapter</code> restent inchangés.
+<strong>C'est ça, le découplage</strong> : il ne se mesure pas au nombre de
+composants, mais au nombre de fichiers qu'un nouveau besoin oblige à rouvrir.</p>
+
+<h3 id="et-quand-il-nest-pas-justifié">Et quand il n'est pas justifié<a class="anchor" href="#et-quand-il-nest-pas-justifié" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le broker n'est pas neutre : c'est un composant avec état à déployer,
+superviser, sécuriser et sauvegarder, plus un second processus (le worker) à faire
+vivre. Si les trois conditions suivantes sont réunies, il n'apporte rien :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Question</th><th>Si la réponse est…</th><th>Alors</th></tr></thead>
+  <tbody>
+    <tr><td>Combien de consommateurs ?</td><td><strong>Un seul</strong>, et il ne bougera pas</td><td>Le broker ne découple rien</td></tr>
+    <tr><td>Combien de temps prend le travail ?</td><td>Quelques <strong>millisecondes</strong></td><td>Le faire dans la requête est plus simple</td></tr>
+    <tr><td>Y a-t-il des pics ?</td><td>Non, débit <strong>régulier et faible</strong></td><td>Rien à lisser</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Dans ce cas, un <code>BackgroundTasks</code> FastAPI ou une tâche
+<code>asyncio</code> suffit &mdash; avec sa propre limite, assumée : le travail
+meurt avec le processus, donc perte au premier redémarrage. Et si le besoin est
+seulement de <em>rattraper des écarts</em>, la réconciliation périodique évoquée au
+<a href="./08-transactions-et-erreurs.html#en-a-t-on-vraiment-besoin-">chapitre 08</a>
+coûte encore moins cher.</p>
+
+<p>Ici, RabbitMQ est justifié par le point 1 (l'envoi SMTP est lent et peut partir
+en rafale) et par le point 3 en puissance (l'exchange est déjà en place, un second
+consommateur ne coûte qu'un <code>bind</code>). Il l'est aussi, il faut le dire,
+parce que ce dépôt sert de démonstration : il montre un adaptateur driving
+non-HTTP, ce qu'aucun <code>BackgroundTasks</code> n'aurait illustré
+(<a href="./07-adaptateurs.html#le-worker-rabbitmq">ch. 07</a>).</p>
+
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 
 <ul>
@@ -301,6 +417,10 @@ microsecondes.</p>
   <li>L'entité <strong>enregistre</strong> un événement, elle ne l'envoie pas.</li>
   <li>Publier avant le commit est un compromis : le pattern <strong>outbox</strong>
       est la réponse quand ça devient inacceptable.</li>
+  <li>Un <strong>broker</strong> ne sert pas à garantir la livraison, mais à
+      <strong>lisser la charge</strong>, à externaliser les retries en
+      configuration de file, et à laisser N consommateurs s'abonner sans toucher au
+      producteur. Aucun de ces trois besoins ? Une tâche de fond suffit.</li>
 </ul>
 
 <div class="exercises">
@@ -316,6 +436,11 @@ microsecondes.</p>
     <li>Le worker échoue à envoyer un e-mail sur 3 destinataires. Où va
         l'information d'échec, et pourquoi le message principal est-il quand même
         acquitté ?</li>
+    <li>On te demande d'envoyer un e-mail de bienvenue à la création d'un
+        utilisateur : un seul destinataire, un seul consommateur, aucun pic
+        attendu. Faut-il passer par RabbitMQ ? Justifie avec les trois questions
+        de la section « Et quand il n'est pas justifié », et nomme ce que tu perds
+        dans l'option la plus simple.</li>
   </ol>
   <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-11">Corrigés</a></p>
 </div>

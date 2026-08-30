@@ -546,6 +546,16 @@ ont réussi » &mdash; et la DLQ porte la seconde information. Sans ce
 <code>publish</code> explicite, ces échecs partiels seraient silencieusement perdus,
 puisqu'un message acquitté n'est jamais dead-letté.</p>
 
+<p><strong>4.</strong> Non. Un seul consommateur (rien à découpler), un seul e-mail
+(rien à lisser), pas de pic (rien à tamponner) : les trois raisons d'avoir un broker
+tombent. Un <code>BackgroundTasks</code> FastAPI suffit, et t'épargne un composant avec
+état plus un processus worker. Ce que tu perds : la durabilité &mdash; si le processus
+redémarre entre la réponse HTTP et l'envoi, l'e-mail de bienvenue disparaît sans trace,
+alors qu'un message publié dans une file durable aurait survécu. Le bon réflexe est de
+le noter comme un compromis assumé, et de rebasculer sur le broker au premier des trois
+signaux qui apparaît &mdash; typiquement le deuxième consommateur (analytics, CRM) qui
+vient se greffer sur « un utilisateur vient d'être créé ».</p>
+
 <h3 id="chapitre-12">Chapitre 12<a class="anchor" href="#chapitre-12" aria-label="Lien vers cette section">#</a></h3>
 
 <p><strong>1.</strong> Au niveau <strong>domaine</strong> : c'est une règle de validité
