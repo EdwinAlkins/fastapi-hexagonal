@@ -65,6 +65,11 @@ spec:
                 nodePort: 30080
       # 2 replicas comme les autres workloads exposés : le point d'entrée est le
       # dernier endroit où l'on veut un SPOF.
+      #
+      # Pas de `resources` sur le data plane : Envoy Gateway applique ses valeurs
+      # par défaut, suffisantes pour un labo. En production on les dimensionnerait
+      # ici (`envoyDeployment.container.resources`) — un proxy sans requests est
+      # le premier candidat à l'éviction sous pression mémoire du nœud.
       envoyDeployment:
         replicas: 2
 ---

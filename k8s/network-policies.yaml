@@ -160,3 +160,129 @@ spec:
     - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 5540 }
+---
+# ===========================================================================
+# EGRESS — ce que nos workloads ont le droit de JOINDRE.
+#
+# Les politiques ci-dessus ne portaient que sur l'entrant. Celles-ci ferment le
+# sortant, et les NetworkPolicy étant additives, chaque objet reste lisible
+# séparément : une politique d'ingress par cible, une politique d'egress par
+# source.
+#
+# ⚠️ LE DNS D'ABORD. Un pod isolé en egress qui ne peut plus joindre CoreDNS ne
+# résout plus « task-manager-pooler », « rabbitmq », rien. Le symptôme n'est pas
+# « accès refusé » mais un timeout à la première connexion, et il ressemble à
+# une panne de la base. C'est l'oubli n°1 sur les egress policies.
+#
+# Périmètre volontairement limité aux workloads QU'ON POSSÈDE : frontend, api,
+# mail-worker, prometheus. Les pods gérés par opérateurs (CNPG, RabbitMQ) gardent
+# un egress libre — leur trafic sortant (réplication, clustering, appels à
+# l'API server) appartient à l'opérateur, change avec ses versions, et le fermer
+# de l'extérieur revient à casser le cluster sans rien apprendre.
+#
+# À noter : aucune de ces politiques n'a besoin d'autoriser l'API SERVER, parce
+# qu'aucun de ces workloads ne lui parle (cf. automountServiceAccountToken:
+# false dans rbac.yaml). Si l'un d'eux devait le faire, ce serait le piège
+# suivant : l'API server vit HORS du CIDR des pods, il faut un `ipBlock` sur
+# l'IP du nœud — un namespaceSelector ne l'atteint jamais.
+# ===========================================================================
+
+# --- Frontend : DNS + l'API. Rien d'autre, surtout pas la base. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: egress-frontend, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: frontend } }
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      podSelector: { matchLabels: { k8s-app: kube-dns } }
+    ports:
+    - { protocol: UDP, port: 53 }
+    - { protocol: TCP, port: 53 }
+  - to:
+    - podSelector: { matchLabels: { app: api } }
+    ports:
+    - { protocol: TCP, port: 8000 }
+---
+# --- API : DNS + les quatre dépendances déclarées dans api-config.yaml. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: egress-api, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: api } }
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      podSelector: { matchLabels: { k8s-app: kube-dns } }
+    ports:
+    - { protocol: UDP, port: 53 }
+    - { protocol: TCP, port: 53 }
+  - to:
+    - podSelector: { matchLabels: { cnpg.io/podRole: pooler } }
+    ports:
+    - { protocol: TCP, port: 5432 }
+  - to:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: rabbitmq } }
+    ports:
+    - { protocol: TCP, port: 5672 }
+  - to:
+    - podSelector: { matchLabels: { app: valkey } }
+    ports:
+    - { protocol: TCP, port: 6379 }
+  - to:
+    - podSelector: { matchLabels: { app: mailpit } }
+    ports:
+    - { protocol: TCP, port: 1025 }
+---
+# --- Worker d'e-mails : mêmes dépendances que l'API. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: egress-mail-worker, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: mail-worker } }
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      podSelector: { matchLabels: { k8s-app: kube-dns } }
+    ports:
+    - { protocol: UDP, port: 53 }
+    - { protocol: TCP, port: 53 }
+  - to:
+    - podSelector: { matchLabels: { cnpg.io/podRole: pooler } }
+    ports:
+    - { protocol: TCP, port: 5432 }
+  - to:
+    - podSelector: { matchLabels: { app.kubernetes.io/name: rabbitmq } }
+    ports:
+    - { protocol: TCP, port: 5672 }
+  - to:
+    - podSelector: { matchLabels: { app: valkey } }
+    ports:
+    - { protocol: TCP, port: 6379 }
+  - to:
+    - podSelector: { matchLabels: { app: mailpit } }
+    ports:
+    - { protocol: TCP, port: 1025 }
+---
+# --- Prometheus : DNS + la cible statique `api:8000` de sa config. ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: egress-prometheus, namespace: task-manager }
+spec:
+  podSelector: { matchLabels: { app: prometheus } }
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      podSelector: { matchLabels: { k8s-app: kube-dns } }
+    ports:
+    - { protocol: UDP, port: 53 }
+    - { protocol: TCP, port: 53 }
+  - to:
+    - podSelector: { matchLabels: { app: api } }
+    ports:
+    - { protocol: TCP, port: 8000 }

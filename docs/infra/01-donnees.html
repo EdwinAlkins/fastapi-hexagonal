@@ -31,6 +31,8 @@
     <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
     <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
     <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+    <li><a href="./06-stockage.html"><span class="num">06</span>Le stockage</a></li>
+    <li><a href="./07-securite.html"><span class="num">07</span>Sécurité</a></li>
   </ul>
   <h2>Voir aussi</h2>
   <ul>
@@ -123,7 +125,9 @@ et pas un.</p>
   failover n'est jamais instantané : détection, promotion, bascule du Service,
   reconnexion des clients &mdash; et les transactions en vol échouent
   (<a href="./03-resilience.html#scénario-de-drain">ch. 03</a>). Ce dépôt ne se fixe
-  ni l'un ni l'autre : c'est un banc d'essai, pas un engagement de service.</p>
+  ni l'un ni l'autre : c'est un banc d'essai, pas un engagement de service. Les
+  deux sont néanmoins <a href="./05-exploitation.html#rpo-rto-slo">mesurés au
+  chapitre 05</a> — un objectif qu'on ne mesure pas n'est qu'un vœu.</p>
 </div>
 
 <div class="warn">
@@ -359,7 +363,7 @@ contient que ce qui n'est pas généré &mdash; et ses valeurs sont des
 </ul>
 
 <nav class="pager">
-  <a href="./index.html">&larr; Vue d'ensemble</a>
+  <a href="./00-compose.html">&larr; 00. Docker Compose</a>
   <a href="./02-workloads.html">02. Les workloads &rarr;</a>
 </nav>
 </main>

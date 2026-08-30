@@ -12,8 +12,15 @@ metadata:
   namespace: task-manager
 spec:
   backoffLimit: 5
+  # Pas de ttlSecondsAfterFinished : le Job terminé reste visible pour
+  # l'inspection (`kubectl describe job/db-migrate`, `kubectl logs`), ce qui est
+  # l'intérêt d'un support pédagogique. En production on ajouterait
+  # `ttlSecondsAfterFinished: 300` pour que le ramasse-miettes le supprime.
   template:
     spec:
+      # Comme les autres workloads : identité dédiée, aucun jeton monté.
+      # Le Job ne parle qu'à PostgreSQL (cf. k8s/rbac.yaml).
+      serviceAccountName: migrate
       restartPolicy: OnFailure
       securityContext:
         runAsNonRoot: true

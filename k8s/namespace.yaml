@@ -1,4 +1,31 @@
+# Pod Security Admission : trois modes, trois niveaux, sur le namespace.
+#
+# PSA remplace les PodSecurityPolicy (retirées en 1.25). Le contrôleur
+# d'admission compare chaque pod à un profil et, selon le mode :
+#   enforce → refuse la création du pod
+#   audit   → écrit une entrée dans l'audit log du cluster
+#   warn    → renvoie un avertissement à qui fait le `kubectl apply`
+#
+# On enforce `baseline` (interdit privileged, hostNetwork, hostPath, les
+# capabilities dangereuses…) et on vise `restricted` en audit/warn seulement.
+#
+# ⚠️ Pourquoi pas `enforce: restricted` tout de suite : `restricted` exige
+# runAsNonRoot, seccompProfile et capabilities.drop=[ALL] sur TOUS les pods du
+# namespace. Nos workloads applicatifs le respectent déjà, mais les images
+# tierces (valkey, mailpit, prometheus, redisinsight) tournent en défaut. Les
+# enforcer aujourd'hui rendrait le namespace indéployable.
+#
+# Le `warn: restricted` est le vrai outil pédagogique ici : il affiche à chaque
+# `kubectl apply` la liste exacte de ce qu'il reste à durcir, sans rien casser.
+# Voir docs/infra/07-securite.html pour le relevé de ces avertissements.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: task-manager
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest

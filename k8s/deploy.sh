@@ -20,6 +20,25 @@ REDIS_INSIGHT_URL="http://redisinsight.localhost"
 # Se placer à la racine du dépôt (parent de ce script), quel que soit le CWD.
 cd "$(dirname "$0")/.."
 
+# Prérequis, avant toute action : Kind ouvre beaucoup de watches inotify (un
+# kubelet et un conteneur par nœud). Sous les limites par défaut de certaines
+# distributions, le cluster devient instable de façon peu lisible — des pods qui
+# ne démarrent jamais, des logs qui se figent.
+#
+# On se contente d'AVERTIR : élever ces limites demande les droits root, et un
+# script de déploiement n'a pas à réclamer sudo — encore moins à échouer sur un
+# refus alors que le déploiement, lui, a réussi.
+WATCHES=$(cat /proc/sys/fs/inotify/max_user_watches 2>/dev/null || echo 0)
+INSTANCES=$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 0)
+if [ "$WATCHES" -lt 524288 ] || [ "$INSTANCES" -lt 1024 ]; then
+  echo "⚠️  Limites inotify basses (watches=$WATCHES, instances=$INSTANCES)."
+  echo "    Si Kind devient instable, exécute :"
+  echo "      sudo sysctl -w fs.inotify.max_user_watches=524288"
+  echo "      sudo sysctl -w fs.inotify.max_user_instances=1024"
+  echo "    Le déploiement continue malgré tout."
+  echo
+fi
+
 echo "==> 1/6  Cluster Kind + Envoy Gateway (${ENVOY_GATEWAY_VERSION})"
 if ! kind get clusters | grep -qx "$CLUSTER_NAME"; then
   kind create cluster --config k8s/kind-config.yaml
@@ -79,6 +98,7 @@ kind load docker-image task-manager-api:latest task-manager-frontend:latest --na
 
 echo "==> 5/6  Namespace, secrets, base de données, dépendances"
 kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/secrets.yaml
 kubectl apply -f k8s/database.yaml
 kubectl wait --for=condition=Ready cluster/task-manager-db -n "$NS" --timeout=300s
@@ -114,17 +134,3 @@ echo "   RedisInsight : http://redisinsight.localhost"
 echo "   Prometheus   : http://prometheus.localhost"
 echo "   Suivi        : kubectl get pods -n $NS -w"
 echo "   Métriques    : kubectl top nodes  (attendre ~30–60s après le deploy)"
-
-
-echo "Update limits fs inotify"
-# Voir les limites actuelles
-ulimit -n
-cat /proc/sys/fs/inotify/max_user_watches
-cat /proc/sys/fs/inotify/max_user_instances
-
-# Augmenter (session courante)
-ulimit -n 65536
-
-# Persistant
-sudo sysctl -w fs.inotify.max_user_watches=524288
-sudo sysctl -w fs.inotify.max_user_instances=1024

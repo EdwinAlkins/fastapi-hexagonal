@@ -45,6 +45,16 @@ def chapitres_html(base: Path | None = None) -> list[Path]:
     return sorted(cours_html(base).glob("[0-9][0-9]-*.html"))
 
 
+def infra_html(base: Path | None = None) -> Path:
+    """Pages de la section infra. HTML seul : pas de jumeau markdown."""
+    return (base or racine()) / "docs/infra"
+
+
+def chapitres_infra(base: Path | None = None) -> list[Path]:
+    """Chapitres infra numérotés, dans l'ordre. Exclut index.html."""
+    return sorted(infra_html(base).glob("[0-9][0-9]-*.html"))
+
+
 # ── Ancres ──────────────────────────────────────────────────────────────────
 
 

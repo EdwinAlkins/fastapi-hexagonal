@@ -44,3 +44,8 @@ spec:
       memory: 600Mi
     limits:
       memory: 600Mi
+      # Pas de limite CPU, volontairement — contrairement à l'api et au frontend.
+      # Un broker doit pouvoir burster sur les pics de messages ; une limite CPU
+      # atteinte provoque du throttling, donc des heartbeats inter-nœuds ratés,
+      # donc des partitions de cluster fantômes. La mémoire, elle, reste bornée :
+      # c'est elle qui déclenche les blocages de publication de RabbitMQ.

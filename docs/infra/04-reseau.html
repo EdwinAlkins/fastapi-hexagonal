@@ -31,6 +31,8 @@
     <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
     <li><a href="./04-reseau.html" aria-current="page"><span class="num">04</span>Réseau</a></li>
     <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+    <li><a href="./06-stockage.html"><span class="num">06</span>Le stockage</a></li>
+    <li><a href="./07-securite.html"><span class="num">07</span>Sécurité</a></li>
   </ul>
   <h2>Voir aussi</h2>
   <ul>
@@ -47,10 +49,13 @@
 </header>
 
 <div class="tldr">
-  <strong>TL;DR</strong> &mdash; Neuf <code>NetworkPolicy</code>, une par cible,
-  qui listent leurs sources autorisées. Pas de <em>default-deny</em> global : le
-  refus vient de l'existence même d'une politique sur la cible. Le frontend ne peut
-  <strong>jamais</strong> joindre PostgreSQL.
+  <strong>TL;DR</strong> &mdash; Neuf <code>NetworkPolicy</code>
+  <strong>d'ingress</strong>, une par cible, qui listent leurs sources autorisées.
+  Pas de <em>default-deny</em> global : le refus vient de l'existence même d'une
+  politique sur la cible. Le frontend ne peut <strong>jamais</strong> joindre
+  PostgreSQL. Le sortant se ferme séparément &mdash; c'est l'objet des quatre
+  politiques d'egress du <a href="./07-securite.html#fermer-legress">chapitre
+  07</a>.
 </div>
 
 <h2 id="le-modèle-choisi">Le modèle choisi : une politique par cible<a class="anchor" href="#le-modèle-choisi" aria-label="Lien vers cette section">#</a></h2>
@@ -178,7 +183,7 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
 </svg>
 </figure>
 
-<h2 id="les-neuf-politiques">Les neuf politiques<a class="anchor" href="#les-neuf-politiques" aria-label="Lien vers cette section">#</a></h2>
+<h2 id="les-neuf-politiques">Les neuf politiques d'ingress<a class="anchor" href="#les-neuf-politiques" aria-label="Lien vers cette section">#</a></h2>
 
 <div class="table-wrap">
 <table>
@@ -196,6 +201,12 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
   </tbody>
 </table>
 </div>
+
+<p><code>k8s/network-policies.yaml</code> en contient <strong>treize</strong> :
+ces neuf-là, plus les quatre politiques d'egress ajoutées au
+<a href="./07-securite.html#fermer-legress">chapitre 07</a>. Les NetworkPolicy
+étant additives, chacune se lit isolément &mdash; une politique d'ingress par
+cible, une politique d'egress par source.</p>
 
 <p>Trois détails que la lecture rapide manque :</p>
 
@@ -468,8 +479,9 @@ que d'y écrire 80.</p>
 <ul>
   <li>Une <strong>politique par cible</strong> : plus lisible et moins risqué qu'un
       default-deny global, au prix d'une sûreté par défaut moindre.</li>
-  <li>Une politique <code>Ingress</code> ne verrouille que l'entrant : l'egress,
-      <strong>DNS compris</strong>, reste libre.</li>
+  <li>Une politique <code>Ingress</code> ne verrouille que l'entrant. L'egress se
+      ferme séparément, et il l'est désormais pour les workloads applicatifs
+      (<a href="./07-securite.html#fermer-legress">ch. 07</a>).</li>
   <li>Ne pas oublier les sources non applicatives : <strong>Prometheus</strong>, le
       <strong>clustering RabbitMQ</strong>, et les <strong>opérateurs</strong>.</li>
   <li>Une <code>NetworkPolicy</code> non appliquée par le CNI échoue en silence :

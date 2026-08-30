@@ -12,6 +12,9 @@ spec:
     metadata:
       labels: { app: api }
     spec:
+      # Identité dédiée, sans jeton monté : l'API ne parle jamais à l'API server
+      # (cf. k8s/rbac.yaml).
+      serviceAccountName: api
       # Durcissement : l'image backend n'a pas de USER → sans ça, le pod tourne
       # en root. On force un UID non-root + seccomp par défaut.
       securityContext:

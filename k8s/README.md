@@ -15,7 +15,8 @@ docker-compose → Kubernetes.
 | Fichier | Rôle |
 |---|---|
 | `kind-config.yaml` | Cluster Kind 4 nœuds (1 control-plane + 3 workers) + mapping 80→30080 / 443→30443 |
-| `namespace.yaml` | Namespace `task-manager` |
+| `namespace.yaml` | Namespace `task-manager` + labels Pod Security Admission (`enforce: baseline`, `warn`/`audit: restricted`) |
+| `rbac.yaml` | Un ServiceAccount par workload, sans jeton monté, sans aucun droit |
 | `secrets.yaml` | Secrets divers (RedisInsight encryption key) - RabbitMQ utilise le secret généré par l'opérateur (`rabbitmq-default-user`) |
 | `database.yaml` | Cluster CNPG (3 instances, anti-affinité) + Pooler (2) |
 | `rabbitmq.yaml` | Cluster RabbitMQ (3 nœuds, géré par l'opérateur officiel) |
@@ -81,6 +82,7 @@ kind load docker-image task-manager-api:latest task-manager-frontend:latest --na
 
 # 4. Namespace, secrets, BDD, dépendances
 kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/rbac.yaml
 kubectl apply -f k8s/secrets.yaml
 kubectl apply -f k8s/database.yaml
 kubectl wait --for=condition=Ready cluster/task-manager-db -n task-manager --timeout=300s

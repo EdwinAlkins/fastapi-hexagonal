@@ -31,6 +31,8 @@
     <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
     <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
     <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+    <li><a href="./06-stockage.html"><span class="num">06</span>Le stockage</a></li>
+    <li><a href="./07-securite.html"><span class="num">07</span>Sécurité</a></li>
   </ul>
   <h2>Voir aussi</h2>
   <ul>
@@ -299,6 +301,14 @@ l'image sur Docker Hub et échouerait en <code>ImagePullBackOff</code>.</p>
 build</strong> du frontend : elles sont figées dans le bundle JavaScript au moment
 de la compilation, pas lues à l'exécution. Changer un hostname de console impose
 donc de reconstruire l'image &mdash; une contrainte du front, pas du cluster.</p>
+
+<div class="note">
+  <strong>Le durcissement n'est qu'une porte sur trois</strong>
+  <p>Tout ce chapitre protège contre une <em>évasion</em> du conteneur. Il ne dit
+  rien de ce qu'un attaquant peut faire depuis l'intérieur : parler à l'API
+  Kubernetes, déployer un pod privilégié, exfiltrer vers Internet. Ces trois
+  portes-là se ferment au <a href="./07-securite.html">chapitre 07</a>.</p>
+</div>
 
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 

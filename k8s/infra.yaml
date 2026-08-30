@@ -10,6 +10,9 @@ metadata:
   namespace: task-manager
 spec:
   serviceName: valkey
+  # 1 seul replica, donc pas d'anti-affinité : elle n'aurait rien à répartir.
+  # Le cache est jetable — sa perte est une baisse de performance, pas un
+  # incident de données (cf. cours ch. 11).
   replicas: 1
   selector:
     matchLabels: { app: valkey }
@@ -76,6 +79,7 @@ spec:
     spec:
       containers:
       - name: mailpit
+        # ⚠️ tag mutable : non reproductible, assumé pour un labo (cf. ch. 07).
         image: axllent/mailpit:latest
         ports:
         - { containerPort: 1025, name: smtp }
@@ -109,11 +113,67 @@ data:
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
+    # Les SLI sont calculés en continu par des recording rules, pas au moment
+    # où quelqu'un ouvre un graphique : une requête ad hoc sur 30 jours coûte
+    # cher et donne un chiffre que personne ne surveille.
+    rule_files:
+      - /etc/prometheus/rules/*.yml
     scrape_configs:
       - job_name: task-manager-api
         metrics_path: /metrics
         static_configs:
           - targets: ["api:8000"]
+---
+# ---------------------------------------------------------------------------
+# SLI de l'API — les indicateurs sur lesquels se pose un SLO.
+#
+# Un SLI est une MESURE (« quelle part des requêtes réussit »), un SLO est la
+# CIBLE qu'on se fixe dessus (« 99,9 % sur 30 jours »). Prometheus ne connaît
+# que le premier : la cible est une décision, pas une métrique.
+#
+# Convention de nommage : niveau:métrique:opération — c'est celle de Prometheus,
+# elle rend les séries dérivées immédiatement reconnaissables.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: task-manager
+data:
+  slo.yml: |
+    groups:
+      - name: sli-api
+        interval: 15s
+        rules:
+          # Disponibilité : part des requêtes qui ne renvoient PAS une 5xx.
+          # Les 4xx sont exclues du numérateur des échecs : un 404 est une
+          # réponse correcte du service à une mauvaise demande du client.
+          #
+          # ⚠️ Deux pièges, tous deux vérifiés sur le cluster :
+          #  1. prometheus-fastapi-instrumentator GROUPE les codes : le label
+          #     `status` vaut "2xx"/"5xx", pas "200"/"503". Un sélecteur
+          #     `status=~"5.."` ne matche donc JAMAIS rien.
+          #  2. sum() sur un sélecteur sans série renvoie un vecteur VIDE, pas 0.
+          #     Sans `or vector(0)`, le ratio disparaît dès qu'il n'y a aucune
+          #     erreur — c'est-à-dire exactement quand tout va bien.
+          - record: sli:api_requests:rate5m
+            expr: sum(rate(http_requests_total[5m])) or vector(0)
+          - record: sli:api_requests_failed:rate5m
+            expr: sum(rate(http_requests_total{status="5xx"}[5m])) or vector(0)
+          - record: sli:api_availability:ratio5m
+            expr: |
+              1 - (
+                sli:api_requests_failed:rate5m
+                /
+                clamp_min(sli:api_requests:rate5m, 1e-9)
+              )
+          # Latence : le p95 sur 5 minutes, calculé depuis l'histogramme.
+          - record: sli:api_latency_p95:5m
+            expr: |
+              histogram_quantile(
+                0.95,
+                sum by (le) (rate(http_request_duration_seconds_bucket[5m]))
+              )
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -128,6 +188,7 @@ spec:
     metadata:
       labels: { app: prometheus }
     spec:
+      serviceAccountName: prometheus
       containers:
       - name: prometheus
         image: prom/prometheus:v3.1.0
@@ -141,10 +202,18 @@ spec:
         - name: config
           mountPath: /etc/prometheus/prometheus.yml
           subPath: prometheus.yml
+        # Volume distinct : le montage de prometheus.yml passe par subPath, qui
+        # expose UN fichier. `rule_files` attend un répertoire à globber, donc
+        # un second volume monté sans subPath.
+        - name: rules
+          mountPath: /etc/prometheus/rules
       volumes:
       - name: config
         configMap:
           name: prometheus-config
+      - name: rules
+        configMap:
+          name: prometheus-rules
 ---
 apiVersion: v1
 kind: Service
@@ -175,6 +244,7 @@ spec:
     spec:
       containers:
       - name: redisinsight
+        # ⚠️ tag mutable : non reproductible, assumé pour un labo (cf. ch. 07).
         image: redis/redisinsight:latest
         ports:
         - containerPort: 5540

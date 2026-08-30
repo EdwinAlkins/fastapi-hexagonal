@@ -1,0 +1,58 @@
+# Identité des workloads : un ServiceAccount par charge, aucun droit accordé.
+#
+# Sans ce fichier, les quatre workloads tournaient sous le ServiceAccount
+# `default` du namespace, avec son jeton monté dans chaque conteneur — un jeton
+# dont aucun d'eux n'a le moindre usage : rien dans ce dépôt ne parle à l'API
+# server. C'est un identifiant offert gratuitement à quiconque obtient une
+# exécution de code dans un conteneur.
+#
+# Deux gestes, dans cet ordre d'importance :
+#   1. `automountServiceAccountToken: false` — ne pas monter ce qui ne sert pas ;
+#   2. un ServiceAccount nommé par workload — pour que le jour où l'un d'eux a
+#      vraiment besoin d'un droit, on le lui donne à LUI et pas à tout le
+#      namespace.
+#
+# Il n'y a volontairement AUCUN Role ni RoleBinding ici. Le meilleur RBAC est
+# celui qu'on n'a pas à écrire : ces workloads n'ont besoin de rien.
+# Voir docs/infra/07-securite.html pour la forme qu'aurait un Role minimal.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: task-manager
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mail-worker
+  namespace: task-manager
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend
+  namespace: task-manager
+automountServiceAccountToken: false
+---
+# Job de migration : éphémère, mais soumis à la même règle que le reste — il ne
+# parle qu'à PostgreSQL, il n'a donc aucun besoin de jeton.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: migrate
+  namespace: task-manager
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: task-manager
+# Prometheus scrape `api:8000` par une cible statique (cf. infra.yaml), pas par
+# la découverte Kubernetes : il n'a donc pas besoin de lire l'API server non
+# plus. Le jour où l'on passe en `kubernetes_sd_configs`, c'est ici qu'un Role
+# de lecture des pods/services apparaîtrait — et le montage redeviendrait utile.
+automountServiceAccountToken: false

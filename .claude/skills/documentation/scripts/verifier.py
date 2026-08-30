@@ -22,9 +22,11 @@ from commun import (
     ancres_html,
     ancres_md,
     chapitres_html,
+    chapitres_infra,
     chapitres_md,
     cours_html,
     cours_md,
+    infra_html,
     liens_html,
     racine,
     site,
@@ -171,33 +173,56 @@ def _ancre(titre: str) -> str:
 # ── 4. Navigation ───────────────────────────────────────────────────────────
 
 
-def navigation() -> None:
-    """Sidenav complet partout, et chaîne des pagers continue."""
-    print("\nNavigation")
-    attendus = [p.stem for p in chapitres_html(R)]
+def _section_navigable(dossier: Path, pages: list[Path], libelle: str) -> int:
+    """Sidenav complet sur chaque page de la section, chaîne des pagers continue.
 
-    for page in sorted(cours_html(R).glob("*.html")):
+    Le sidenav est **recopié dans chaque page** : l'oublier sur une seule ne se voit
+    qu'à l'œil, et c'est déjà arrivé. D'où ce contrôle, appliqué aux deux sections.
+    """
+    attendus = [p.stem for p in pages]
+
+    for page in sorted(dossier.glob("*.html")):
         contenu = page.read_text()
         for stem in attendus:
             # La page courante insère aria-current entre le href et le span :
             # une comparaison littérale produirait un faux positif par page.
             if not re.search(rf'href="\./{re.escape(stem)}\.html"[^>]*><span class="num">', contenu):
-                echec(f"{page.name} : « {stem} » absent du sidenav")
+                echec(f"{libelle}/{page.name} : « {stem} » absent du sidenav")
 
     # La chaîne doit se dérouler sans trou du premier au dernier chapitre.
     for precedent, suivant in zip(attendus, attendus[1:]):
-        contenu = (cours_html(R) / f"{precedent}.html").read_text()
+        contenu = (dossier / f"{precedent}.html").read_text()
         pager = re.search(r'<nav class="pager">(.*?)</nav>', contenu, re.S)
         if not pager:
-            echec(f"{precedent} : pas de pager")
+            echec(f"{libelle}/{precedent} : pas de pager")
         elif f'href="./{suivant}.html"' not in pager.group(1):
-            echec(f"{precedent} : le pager ne mène pas à {suivant}")
-        contenu = (cours_html(R) / f"{suivant}.html").read_text()
+            echec(f"{libelle}/{precedent} : le pager ne mène pas à {suivant}")
+        contenu = (dossier / f"{suivant}.html").read_text()
         pager = re.search(r'<nav class="pager">(.*?)</nav>', contenu, re.S)
         if pager and f'href="./{precedent}.html"' not in pager.group(1):
-            echec(f"{suivant} : le pager ne revient pas à {precedent}")
+            echec(f"{libelle}/{suivant} : le pager ne revient pas à {precedent}")
 
-    print(f"  {GRIS}{len(attendus)} chapitres dans la chaîne{RAZ}")
+    return len(attendus)
+
+
+def navigation() -> None:
+    """Sidenav complet partout, et chaîne des pagers continue — cours ET infra."""
+    print("\nNavigation")
+    n_cours = _section_navigable(cours_html(R), chapitres_html(R), "cours")
+
+    pages_infra = chapitres_infra(R)
+    n_infra = _section_navigable(infra_html(R), pages_infra, "infra")
+    # Le dernier chapitre infra ne mène pas à un chapitre suivant mais retourne au
+    # sommaire de la section : la chaîne du cours ne se transpose pas telle quelle.
+    if pages_infra:
+        dernier = pages_infra[-1]
+        pager = re.search(r'<nav class="pager">(.*?)</nav>', dernier.read_text(), re.S)
+        if not pager:
+            echec(f"infra/{dernier.stem} : pas de pager")
+        elif 'href="./index.html"' not in pager.group(1):
+            echec(f"infra/{dernier.stem} : le dernier pager ne revient pas à index.html")
+
+    print(f"  {GRIS}{n_cours} chapitres de cours, {n_infra} chapitres d'infra dans la chaîne{RAZ}")
 
 
 # ── 5. Comptages ────────────────────────────────────────────────────────────
@@ -241,7 +266,14 @@ def comptages() -> None:
         if not re.search(rf"^\| {numero} \| \[[^\]]+\]\({page.name}\)", tableau, re.M):
             echec(f"cours/README.md : ligne « {numero} » absente ou mal numérotée")
 
-    print(f"  {GRIS}{n} chapitres (00 → {dernier}){RAZ}")
+    # Section infra : le sommaire doit lister tous les chapitres, ni plus ni moins.
+    n_infra = len(chapitres_infra(R))
+    index_infra = infra_html(R) / "index.html"
+    listes = index_infra.read_text().count('<span class="title">')
+    if listes != n_infra:
+        echec(f"docs/infra/index.html : {listes} chapitres listés, {n_infra} attendus")
+
+    print(f"  {GRIS}{n} chapitres de cours (00 → {dernier}), {n_infra} d'infra{RAZ}")
 
 
 FAMILLES = {

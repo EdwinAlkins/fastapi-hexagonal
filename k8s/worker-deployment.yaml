@@ -13,6 +13,7 @@ spec:
     metadata:
       labels: { app: mail-worker }
     spec:
+      serviceAccountName: mail-worker
       # Durcissement : UID non-root + seccomp par défaut (image sans USER).
       securityContext:
         runAsNonRoot: true

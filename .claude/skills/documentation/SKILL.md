@@ -43,10 +43,14 @@ python3 $S/squelette.py 10 mon-slug "Mon titre" "Court" --ecrire
   `style.css`, `<title>` présent, saut de ligne final, `aria-current="page"` sur
   chaque page de contenu ;
 - **liens** — cibles et ancres, côté HTML **et** côté markdown ;
-- **parite** — mêmes chapitres et mêmes sections des deux côtés ;
-- **navigation** — sidenav complet sur chaque page, chaîne des pagers continue ;
+- **parite** — mêmes chapitres et mêmes sections des deux côtés (cours seulement :
+  la section infra n'a pas de jumeau markdown) ;
+- **navigation** — sidenav complet sur chaque page, chaîne des pagers continue,
+  **pour le cours ET pour l'infra**. Le dernier chapitre infra retourne à
+  `index.html` au lieu d'enchaîner : cette exception est contrôlée à part ;
 - **comptages** — le nombre de chapitres est affirmé à plusieurs endroits (deux
-  README, deux index, la méta-description), ils doivent concorder.
+  README, deux index, la méta-description), ils doivent concorder ; le sommaire
+  `docs/infra/index.html` doit lister exactement les chapitres infra présents.
 
 **Lance `verifier.py` avant de dire que c'est fini.** Il attrape précisément ce
 qu'une relecture humaine laisse passer.
@@ -151,7 +155,9 @@ la propriété (« exactement 1 SELECT »), pas le banc de mesure.
 
 - **Le sidenav est recopié dans chaque page.** Toute modification est un balayage.
   L'oublier sur une seule page ne se voit qu'à l'œil — c'est arrivé, et c'est
-  l'utilisateur qui l'a vu, pas moi. `verifier.py navigation` couvre ce cas.
+  l'utilisateur qui l'a vu, pas moi. `verifier.py navigation` couvre ce cas, dans
+  les deux sections. Il a d'ailleurs trouvé, dès son extension à l'infra, un pager
+  de `01-donnees` qui remontait au sommaire au lieu du chapitre précédent.
 - **La landing reprend des schémas des pages de chapitre.** Ils divergent
   silencieusement. Après modification d'un schéma, compare les deux copies octet
   à octet.

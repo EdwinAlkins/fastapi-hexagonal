@@ -31,6 +31,8 @@
     <li><a href="./03-resilience.html" aria-current="page"><span class="num">03</span>Résilience</a></li>
     <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
     <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+    <li><a href="./06-stockage.html"><span class="num">06</span>Le stockage</a></li>
+    <li><a href="./07-securite.html"><span class="num">07</span>Sécurité</a></li>
   </ul>
   <h2>Voir aussi</h2>
   <ul>
@@ -299,7 +301,10 @@ promotion.</p>
       sont perdues. C'est à l'application de tolérer ces erreurs et de rejouer
       &mdash; le pooler ne fait que réduire le bruit.</li>
   <li><strong>L'instance évincée reste en <code>Pending</code>.</strong>
-      L'anti-affinité <code>required</code> exige un nœud sans instance PostgreSQL :
+      Pour <strong>deux</strong> raisons indépendantes, et il faut lever les deux
+      (<a href="./06-stockage.html#le-volume-épingle-le-pod">ch. 06</a>) : son volume
+      est un répertoire du nœud cordonné, et l'anti-affinité
+      <code>required</code> exige un nœud sans instance PostgreSQL :
       avec 3 workers dont un cordonné, il n'y en a plus. Elle reviendra au
       <code>uncordon</code>.</li>
 </ol>
