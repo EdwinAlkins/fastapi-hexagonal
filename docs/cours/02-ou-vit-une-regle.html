@@ -237,7 +237,7 @@ tâche valide.</p>
 est une propriété d'un <strong>ensemble</strong> d'utilisateurs, pas d'un
 utilisateur : aucune entité ne peut la garantir seule.</p>
 
-<p>En pratique, elle se joue à deux niveaux :</p>
+<p>En pratique, elle se joue à plusieurs niveaux :</p>
 <ul>
   <li>le use case interroge le port (<code>find_by_email</code>) et lève
       <code>EmailAlreadyUsed</code> (<code>ConflictError</code> → 409) &mdash;
@@ -247,11 +247,38 @@ utilisateur : aucune entité ne peut la garantir seule.</p>
       course entre deux requêtes concurrentes.</li>
 </ul>
 
+<p>Mais une garantie qu'on n'entend pas ne sert à rien, et c'est le troisième niveau
+&mdash; celui qu'on oublie. Une violation de contrainte remonte en
+<code>IntegrityError</code> : une erreur <strong>technique</strong>, qu'aucun
+gestionnaire ne sait convertir en statut HTTP. Pire, elle ne survient qu'au
+<code>flush</code> &mdash; donc au <code>commit</code> si personne ne le force,
+c'est-à-dire dans la fermeture de la dépendance de session, <strong>après</strong>
+que la réponse a été construite.</p>
+
+<p>Mesuré sur ce projet avant correction : le client recevait un <code>201</code>
+complet, avec l'identifiant du user dans le corps, pour une transaction annulée.
+Pas un 500 &mdash; un <strong>succès mensonger</strong>, qu'aucun appelant ne peut
+détecter.</p>
+
+<p>D'où le rôle de l'adaptateur : <code>SqlAlchemyUserRepository.save</code> force
+le <code>flush</code> et traduit la violation en <code>EmailAlreadyUsed</code>.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Niveau</th><th>Ce qu'il apporte</th></tr></thead>
+  <tbody>
+    <tr><td>Use case (<code>find_by_email</code>)</td><td>le <strong>message</strong>, dans le cas courant</td></tr>
+    <tr><td>Contrainte en base</td><td>la <strong>garantie</strong>, y compris en course</td></tr>
+    <tr><td>Adaptateur (<code>flush</code> + traduction)</td><td>rend la garantie <strong>audible</strong> en métier</td></tr>
+  </tbody>
+</table>
+</div>
+
 <div class="note">
   <strong>La formulation à retenir</strong>
-  Le use case donne le <strong>message</strong>, la base donne la
-  <strong>garantie</strong>. Vérifier en amont sans contrainte en base, c'est un
-  bug de concurrence en attente.
+  Vérifier en amont sans contrainte en base, c'est un bug de concurrence en
+  attente. Poser la contrainte sans la traduire, c'est le même bug, mais
+  silencieux.
 </div>
 
 <h3 id="5--fk-vers-users---infrastructure">5. « FK vers users » → infrastructure<a class="anchor" href="#5--fk-vers-users---infrastructure" aria-label="Lien vers cette section">#</a></h3>
@@ -260,6 +287,17 @@ utilisateur : aucune entité ne peut la garantir seule.</p>
 traduit dans PostgreSQL une relation que le domaine exprime déjà par un
 <code>UserId</code>. Le domaine ignore jusqu'à l'existence du mot « clé
 étrangère ».</p>
+
+<p>Le tableau des trois niveaux ci-dessus s'applique pourtant tel quel.
+<code>CreateTask</code> vérifie le propriétaire avant d'écrire &mdash; c'est le
+<strong>message</strong>. La FK tranche même en course, quand le user est supprimé
+entre la vérification et l'<code>INSERT</code> &mdash; c'est la
+<strong>garantie</strong>. Et <code>SqlAlchemyTaskRepository.save</code> force le
+<code>flush</code> pour traduire <code>tasks_owner_id_fkey</code> en
+<code>UserNotFound</code> (404) &mdash; c'est ce qui la rend
+<strong>audible</strong>. Ce qui est purement technique, c'est le mécanisme, pas
+ce qu'on en fait entendre : une contrainte posée mais non traduite produit le même
+succès mensonger, quelle que soit la contrainte.</p>
 
 <h2 id="et-le-service-de-domaine-">Et le service de domaine ?<a class="anchor" href="#et-le-service-de-domaine-" aria-label="Lien vers cette section">#</a></h2>
 

@@ -106,22 +106,50 @@ Celle-ci est instructive parce qu'elle n'a pas de réponse unique. L'unicité es
 une propriété d'un **ensemble** d'utilisateurs, pas d'un utilisateur : aucune
 entité ne peut la garantir seule.
 
-En pratique, elle se joue à deux niveaux :
+En pratique, elle se joue à plusieurs niveaux :
 
 - le use case interroge le port (`find_by_email`) et lève `EmailAlreadyUsed`
   (`ConflictError` → 409) — c'est ce qui produit une **erreur métier lisible** ;
 - la base porte une contrainte `UNIQUE` — c'est ce qui **garantit** réellement
   l'intégrité, y compris en cas de course entre deux requêtes concurrentes.
 
-Retiens la formulation : le use case donne le **message**, la base donne la
-**garantie**. Vérifier en amont sans contrainte en base, c'est un bug de
-concurrence en attente.
+Mais une garantie qu'on n'entend pas ne sert à rien, et c'est le troisième niveau
+— celui qu'on oublie. Une violation de contrainte remonte en `IntegrityError` :
+une erreur **technique**, qu'aucun gestionnaire ne sait convertir en statut HTTP.
+Pire, elle ne survient qu'au `flush` — donc au `commit` si personne ne le force,
+c'est-à-dire dans la fermeture de la dépendance de session, **après** que la
+réponse a été construite.
+
+Mesuré sur ce projet avant correction : le client recevait un `201` complet, avec
+l'identifiant du user dans le corps, pour une transaction annulée. Pas un 500 —
+un **succès mensonger**, qu'aucun appelant ne peut détecter.
+
+D'où le rôle de l'adaptateur : `SqlAlchemyUserRepository.save` force le `flush` et
+traduit la violation en `EmailAlreadyUsed`. Trois niveaux, donc :
+
+| Niveau | Ce qu'il apporte |
+|---|---|
+| Use case (`find_by_email`) | le **message**, dans le cas courant |
+| Contrainte en base | la **garantie**, y compris en course |
+| Adaptateur (`flush` + traduction) | rend la garantie **audible** en métier |
+
+Vérifier en amont sans contrainte en base, c'est un bug de concurrence en attente.
+Poser la contrainte sans la traduire, c'est le même bug, mais silencieux.
 
 ### 5. « FK vers users » → infrastructure
 
 Purement technique. La `ForeignKey("users.id", ondelete="CASCADE")` traduit dans
 PostgreSQL une relation que le domaine exprime déjà par un `UserId`. Le domaine
 ignore jusqu'à l'existence du mot « clé étrangère ».
+
+Le tableau des trois niveaux ci-dessus s'applique pourtant tel quel. `CreateTask`
+vérifie le propriétaire avant d'écrire — c'est le **message**. La FK tranche même
+en course, quand le user est supprimé entre la vérification et l'`INSERT` — c'est
+la **garantie**. Et `SqlAlchemyTaskRepository.save` force le `flush` pour traduire
+`tasks_owner_id_fkey` en `UserNotFound` (404) — c'est ce qui la rend **audible**.
+Ce qui est purement technique, c'est le mécanisme, pas ce qu'on en fait entendre :
+une contrainte posée mais non traduite produit le même succès mensonger, quelle
+que soit la contrainte.
 
 ## Et le service de domaine ?
 

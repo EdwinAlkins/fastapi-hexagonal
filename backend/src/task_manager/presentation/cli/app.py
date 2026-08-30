@@ -142,7 +142,7 @@ def _lire_tableau(fichier: Path, illisibles: list[int]) -> Iterator[ImportTaskRo
     for rang, brut in enumerate(elements, start=1):
         try:
             yield _en_ligne(brut)
-        except KeyError, TypeError:
+        except (KeyError, TypeError):
             illisibles.append(rang)
 
 
@@ -153,7 +153,7 @@ def _lire_ndjson(fichier: Path, illisibles: list[int]) -> Iterator[ImportTaskRow
                 continue
             try:
                 yield _en_ligne(orjson.loads(ligne))
-            except orjson.JSONDecodeError, KeyError, TypeError:
+            except (orjson.JSONDecodeError, KeyError, TypeError):
                 illisibles.append(numero)
 
 

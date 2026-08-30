@@ -766,6 +766,48 @@ footer.site {
   min-width: 46rem;
 }
 
+/*
+ * La preuve, en deux temps : le geste à gauche, le verdict à droite. Les deux
+ * colonnes sont inégales parce que leur contenu l'est — un diff de quatre
+ * lignes contre la sortie d'import-linter, plus large. Elles s'empilent avant
+ * que la ligne monospace ne se mette à défiler.
+ */
+.proof {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+  gap: 1.25rem;
+  margin: 1.5rem 0 2rem;
+}
+
+.proof .snippet {
+  margin-bottom: 0;
+}
+
+.proof-label {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Le rouge relie la cause à l'effet : la ligne ajoutée, puis le contrat cassé
+   et l'arête fautive. C'est le seul rouge de la page à cet endroit. */
+.proof-add,
+.proof-ko {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.proof-ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+@media (max-width: 52rem) {
+  .proof {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Le sommaire du cours sur l'accueil : une ligne par chapitre, le numéro en
    colonne fixe pour que les titres s'alignent. */
 .toc {

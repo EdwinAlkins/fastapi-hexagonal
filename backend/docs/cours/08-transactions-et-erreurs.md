@@ -110,6 +110,15 @@ script — et sont tout aussi défendables. Ce qui compte est que la
   elle est traitée au [chapitre 10](10-ecritures-en-masse.md#la-transaction--ni-une-par-ligne-ni-une-pour-tout).
   La règle « un repository ne committe jamais », elle, ne bouge pas : le pouvoir
   de committer se **demande** par un port, il ne s'obtient pas par effet de bord.
+- **Un échec au `commit` arrive trop tard.** Le commit vit dans la *fermeture* de
+  la dépendance, donc **après** la construction de la réponse. Une contrainte
+  violée à ce moment-là ne devient pas un 500 : mesuré sur ce projet, le client
+  reçoit une réponse **complète et positive** (`201`, corps JSON valide) pour une
+  transaction annulée, pendant que le serveur logue « Exception in ASGI
+  application ». Toute écriture dont une contrainte peut échouer doit donc être
+  poussée plus tôt, par un `flush` explicite dans l'adaptateur, qui traduit alors
+  l'erreur technique en erreur métier
+  ([ch. 02](02-ou-vit-une-regle.md)).
 - **PgBouncer en mode transaction.** L'infrastructure de ce projet impose ses
   contraintes (pas de `LISTEN/NOTIFY`, pas de curseur `WITH HOLD`, cache de
   *prepared statements* désactivé). Voir le `CLAUDE.md` du backend.

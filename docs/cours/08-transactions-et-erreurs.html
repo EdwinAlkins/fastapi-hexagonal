@@ -219,6 +219,16 @@ située et unique</strong>, pas la forme exacte.</p>
       La règle «&nbsp;un repository ne committe jamais&nbsp;», elle, ne bouge pas : le
       pouvoir de committer se <strong>demande</strong> par un port, il ne s'obtient pas
       par effet de bord.</li>
+  <li><strong>Un échec au <code>commit</code> arrive trop tard.</strong> Le commit
+      vit dans la <em>fermeture</em> de la dépendance, donc <strong>après</strong> la
+      construction de la réponse. Une contrainte violée à ce moment-là ne devient pas
+      un 500 : mesuré sur ce projet, le client reçoit une réponse <strong>complète et
+      positive</strong> (<code>201</code>, corps JSON valide) pour une transaction
+      annulée, pendant que le serveur logue «&nbsp;Exception in ASGI
+      application&nbsp;». Toute écriture dont une contrainte peut échouer doit donc
+      être poussée plus tôt, par un <code>flush</code> explicite dans l'adaptateur,
+      qui traduit alors l'erreur technique en erreur métier
+      (<a href="./02-ou-vit-une-regle.html#4--e-mail-unique---règle-partagée-entre-application-et-infrastructure">ch. 02</a>).</li>
   <li><strong>PgBouncer en mode transaction.</strong> L'infrastructure de ce projet
       impose ses contraintes (pas de <code>LISTEN/NOTIFY</code>, pas de curseur
       <code>WITH HOLD</code>, cache de <em>prepared statements</em> désactivé).</li>
