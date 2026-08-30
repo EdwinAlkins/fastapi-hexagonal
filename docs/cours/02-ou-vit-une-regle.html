@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02. Où vit une règle ? &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="L'arbre de décision central du cours : value object, entité, service de domaine, use case ou infrastructure — et le test décisif pour trancher.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html" aria-current="page"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>02. Où vit une règle&nbsp;?</h1>
+  <p class="lede">Le chapitre le plus utile du cours. Tout le reste est de la
+  machinerie ; ici, c'est la compétence de conception elle-même.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; « Le domaine contient les règles, l'application
+  orchestre » est trop grossier pour décider en pratique. Ce chapitre donne
+  l'arbre de décision qui manque : invariant d'objet → value object / entité ;
+  invariant d'agrégat → racine ; règle métier sans propriétaire naturel →
+  service de domaine ; enchaînement → use case ; contrainte technique →
+  infrastructure.
+</div>
+
+<h2 id="le-vrai-problème---règle-métier--ne-veut-rien-dire">Le vrai problème : « règle métier » ne veut rien dire<a class="anchor" href="#le-vrai-problème---règle-métier--ne-veut-rien-dire" aria-label="Lien vers cette section">#</a></h2>
+
+<p>On dit facilement « les règles métier vont dans le domaine ». Mais mets côte à
+côte ces cinq affirmations, toutes vraies dans ce projet :</p>
+
+<ol>
+  <li>Un titre de tâche ne peut pas être vide.</li>
+  <li>Une tâche déjà terminée ne peut pas être terminée une seconde fois.</li>
+  <li>On ne crée pas une tâche pour un utilisateur qui n'existe pas.</li>
+  <li>Une adresse e-mail doit être unique parmi les utilisateurs.</li>
+  <li><code>tasks.owner_id</code> doit référencer une ligne existante de <code>users</code>.</li>
+</ol>
+
+<p>Elles ressemblent toutes à « du métier ». Elles vivent pourtant à quatre
+endroits différents, et pour des raisons précises.</p>
+
+<h2 id="larbre-de-décision">L'arbre de décision<a class="anchor" href="#larbre-de-décision" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 660 620" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Arbre de décision. La règle porte-t-elle sur la validité d'une seule valeur ? Oui : value object. Sinon, porte-t-elle sur l'état interne d'un seul agrégat ? Oui : méthode d'entité ou racine d'agrégat. Sinon, est-ce une règle métier sans objet propriétaire ? Oui : service de domaine. Sinon, est-ce un enchaînement ou une policy du cas d'usage ? Oui : use case. Sinon : infrastructure.">
+  <defs>
+    <marker id="f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <rect x="110" y="14" width="180" height="40" rx="7" fill="var(--raised)" stroke="var(--line)"/>
+    <text x="200" y="39" fill="var(--ink)" font-size="12.5" font-weight="600" text-anchor="middle">Une règle à placer</text>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <polygon points="200,72 295,110 200,148 105,110"/>
+      <polygon points="200,196 295,234 200,272 105,234"/>
+      <polygon points="200,320 295,358 200,396 105,358"/>
+      <polygon points="200,444 295,482 200,520 105,482"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="10.5" text-anchor="middle">
+      <text x="200" y="104">Porte-t-elle sur la validité</text>
+      <text x="200" y="118">d'une seule valeur&#160;?</text>
+      <text x="200" y="228">Porte-t-elle sur l'état interne</text>
+      <text x="200" y="242">d'un seul agrégat&#160;?</text>
+      <text x="200" y="352">Règle du métier, mais</text>
+      <text x="200" y="366">sans objet propriétaire&#160;?</text>
+      <text x="200" y="470">Enchaînement, coordination,</text>
+      <text x="200" y="484">policy du cas d'usage&#160;?</text>
+    </g>
+
+    <g fill="var(--surface)" stroke="var(--accent)">
+      <rect x="400" y="83" width="240" height="54" rx="7"/>
+      <rect x="400" y="207" width="240" height="54" rx="7"/>
+      <rect x="400" y="331" width="240" height="54" rx="7"/>
+      <rect x="400" y="455" width="240" height="54" rx="7"/>
+    </g>
+    <rect x="110" y="548" width="180" height="54" rx="7" fill="var(--surface)" stroke="var(--accent)"/>
+
+    <g fill="var(--accent)" font-size="12" font-weight="600" text-anchor="middle">
+      <text x="520" y="106">Value object</text>
+      <text x="520" y="230">Méthode d'entité</text>
+      <text x="520" y="354">Service de domaine</text>
+      <text x="520" y="478">Use case</text>
+      <text x="200" y="571">Infrastructure</text>
+    </g>
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="520" y="122">validation à la construction</text>
+      <text x="520" y="246">ou racine d'agrégat</text>
+      <text x="520" y="370">sans état, sans I/O</text>
+      <text x="520" y="494">couche application</text>
+      <text x="200" y="587">contrainte technique</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f2)">
+      <line x1="200" y1="54" x2="200" y2="70"/>
+      <line x1="295" y1="110" x2="396" y2="110"/>
+      <line x1="295" y1="234" x2="396" y2="234"/>
+      <line x1="295" y1="358" x2="396" y2="358"/>
+      <line x1="295" y1="482" x2="396" y2="482"/>
+      <line x1="200" y1="148" x2="200" y2="194"/>
+      <line x1="200" y1="272" x2="200" y2="318"/>
+      <line x1="200" y1="396" x2="200" y2="442"/>
+      <line x1="200" y1="520" x2="200" y2="546"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="10.5" font-weight="600">
+      <text x="330" y="104">oui</text>
+      <text x="330" y="228">oui</text>
+      <text x="330" y="352">oui</text>
+      <text x="330" y="476">oui</text>
+      <text x="210" y="174">non</text>
+      <text x="210" y="298">non</text>
+      <text x="210" y="422">non</text>
+      <text x="210" y="540">non</text>
+    </g>
+  </g>
+</svg>
+</figure>
+
+<p>Reprenons nos cinq règles.</p>
+
+<h3 id="1--un-titre-ne-peut-pas-être-vide---value-object">1. « Un titre ne peut pas être vide » → value object<a class="anchor" href="#1--un-titre-ne-peut-pas-être-vide---value-object" aria-label="Lien vers cette section">#</a></h3>
+
+<p>La règle porte sur <strong>une valeur isolée</strong>. Elle ne dépend d'aucun
+contexte, aucun autre objet, aucune requête. Elle appartient au type lui-même.</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/value_objects.py
+@dataclass(frozen=True, slots=True)
+class TaskTitle:
+    value: str
+
+    def __post_init__(self) -&gt; None:
+        cleaned = self.value.strip()
+        if not cleaned:
+            raise EmptyTitle()</code></pre></div>
+
+<p>Conséquence : <strong>tout</strong> appelant est couvert. L'API, le CLI, le
+worker, un test, un futur import CSV. La règle n'a plus besoin d'être répétée
+nulle part.</p>
+
+<h3 id="2--pas-de-double-complétion---méthode-de-lentité">2. « Pas de double complétion » → méthode de l'entité<a class="anchor" href="#2--pas-de-double-complétion---méthode-de-lentité" aria-label="Lien vers cette section">#</a></h3>
+
+<p>La règle porte sur une <strong>transition d'état</strong> d'un seul objet, en
+fonction de son état courant. Seule l'entité connaît cet état, donc seule elle
+peut la garantir.</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/entities.py
+def complete(self) -&gt; None:
+    if self.status is TaskStatus.DONE:
+        raise TaskAlreadyCompleted()
+    self.status = TaskStatus.DONE
+    self.completed_at = _now()</code></pre></div>
+
+<p>C'est ce qu'on appelle un <strong>invariant</strong> : une propriété qui doit
+rester vraie à tout moment de la vie de l'objet.</p>
+
+<p>Bel exemple inverse dans le même fichier : <code>rename()</code>
+<strong>autorise</strong> le renommage d'une tâche terminée, et le docstring
+l'explique. Ce n'est pas un oubli, c'est une décision métier &mdash; corriger un
+libellé fautif reste légitime après coup. Une règle absente doit être aussi
+explicite qu'une règle présente.</p>
+
+<h3 id="3--le-propriétaire-doit-exister---use-case">3. « Le propriétaire doit exister » → use case<a class="anchor" href="#3--le-propriétaire-doit-exister---use-case" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Ici on quitte le domaine. Cette vérification implique <strong>deux
+agrégats</strong> (<code>Task</code> et <code>User</code>), et aucun des deux ne
+peut la porter : <code>Task</code> ne connaît pas le référentiel des
+utilisateurs, et <code>User</code> n'a pas à connaître les tâches. Il faut aussi
+<strong>interroger un port</strong>, donc faire une I/O &mdash; ce que les
+entités ne font jamais.</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/task/use_cases/create_task.py
+owner_id = UserId.from_string(command.owner_id)
+if not await self._users.exists(owner_id):
+    raise UserNotFound(str(owner_id))
+task = Task.create(owner_id=owner_id, title=TaskTitle(command.title))</code></pre></div>
+
+<p>Le use case <strong>coordonne</strong>, il ne décide pas de ce qu'est une
+tâche valide.</p>
+
+<h3 id="4--e-mail-unique---règle-partagée-entre-application-et-infrastructure">4. « E-mail unique » → règle partagée entre application et infrastructure<a class="anchor" href="#4--e-mail-unique---règle-partagée-entre-application-et-infrastructure" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Celle-ci est instructive parce qu'elle n'a pas de réponse unique. L'unicité
+est une propriété d'un <strong>ensemble</strong> d'utilisateurs, pas d'un
+utilisateur : aucune entité ne peut la garantir seule.</p>
+
+<p>En pratique, elle se joue à deux niveaux :</p>
+<ul>
+  <li>le use case interroge le port (<code>find_by_email</code>) et lève
+      <code>EmailAlreadyUsed</code> (<code>ConflictError</code> → 409) &mdash;
+      c'est ce qui produit une <strong>erreur métier lisible</strong> ;</li>
+  <li>la base porte une contrainte <code>UNIQUE</code> &mdash; c'est ce qui
+      <strong>garantit</strong> réellement l'intégrité, y compris en cas de
+      course entre deux requêtes concurrentes.</li>
+</ul>
+
+<div class="note">
+  <strong>La formulation à retenir</strong>
+  Le use case donne le <strong>message</strong>, la base donne la
+  <strong>garantie</strong>. Vérifier en amont sans contrainte en base, c'est un
+  bug de concurrence en attente.
+</div>
+
+<h3 id="5--fk-vers-users---infrastructure">5. « FK vers users » → infrastructure<a class="anchor" href="#5--fk-vers-users---infrastructure" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Purement technique. La <code>ForeignKey("users.id", ondelete="CASCADE")</code>
+traduit dans PostgreSQL une relation que le domaine exprime déjà par un
+<code>UserId</code>. Le domaine ignore jusqu'à l'existence du mot « clé
+étrangère ».</p>
+
+<h2 id="et-le-service-de-domaine-">Et le service de domaine ?<a class="anchor" href="#et-le-service-de-domaine-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>C'est le cas de figure que ce projet n'a pas, et qu'il faut pourtant
+connaître.</p>
+
+<p>Un <strong>service de domaine</strong> héberge une règle qui est
+<em>incontestablement</em> métier, mais qui n'appartient naturellement à
+<strong>aucune</strong> entité. Le signal classique : la règle a besoin de
+plusieurs objets à parts égales, et la placer dans l'un d'eux serait arbitraire.</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/pricing/services.py  (exemple illustratif, hors de ce projet)
+class PricingService:
+    """Le prix dépend du client ET de la commande. Ni l'un ni l'autre n'en est
+    le propriétaire naturel : la règle vit dans un service du domaine."""
+
+    def calculate(self, customer: Customer, order: Order) -&gt; Money:
+        base = order.subtotal()
+        if customer.is_premium and base &gt; Money(100, "EUR"):
+            return base * Decimal("0.9")
+        return base</code></pre></div>
+
+<p>Trois garde-fous :</p>
+<ul>
+  <li>Il est <strong>sans état</strong>. Dans cette architecture, il ne fait
+      <strong>pas d'I/O</strong> non plus : un besoin de lecture externe est
+      orchestré par la couche application, qui passe la donnée déjà chargée au
+      service. Ce n'est pas une loi du DDD &mdash; on trouve des services de
+      domaine qui dépendent d'une abstraction du domaine pour obtenir une
+      information nécessaire à leur décision. Le critère qui tient toujours est
+      ailleurs : un service de domaine porte une <strong>décision métier</strong>,
+      il ne pilote pas le <strong>workflow applicatif</strong>.</li>
+  <li>Il porte un nom du <strong>langage métier</strong>
+      (<code>PricingService</code>, <code>TransferPolicy</code>), jamais
+      <code>TaskManager</code> ou <code>UserHelper</code>.</li>
+  <li><strong>N'en abuse pas.</strong> Le réflexe de tout mettre en service
+      produit exactement le modèle anémique qu'on cherche à fuir. Demande-toi
+      toujours d'abord si une entité pourrait légitimement porter la règle.</li>
+</ul>
+
+<h2 id="et-les--policies--applicatives-">Et les « policies » applicatives ?<a class="anchor" href="#et-les--policies--applicatives-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Nuance importante, souvent absente des cours : la couche application n'est pas
+<em>totalement</em> vide de décisions. Elle peut porter des règles qui
+appartiennent au <strong>cas d'usage</strong> plutôt qu'au métier intemporel :</p>
+
+<div class="snippet" data-lang="python"><pre><code>if command.amount &gt; DAILY_TRANSFER_LIMIT:
+    raise DailyTransferLimitExceeded()</code></pre></div>
+
+<p>Un plafond journalier configurable, une limite de pagination, un quota par
+appelant : ce sont des règles de la <em>façon dont on expose</em> le métier, pas
+des invariants d'un objet. Les forcer dans le domaine le pollue ; les nier fait
+mentir le cours.</p>
+
+<p>La formulation honnête est donc :</p>
+
+<blockquote>
+  <p>Le use case ne contient pas les <strong>invariants</strong> du domaine. Il
+  peut contenir la <strong>policy du cas d'usage</strong>.</p>
+</blockquote>
+
+<p>C'est plus long que « l'application ne contient aucune règle », mais c'est
+utilisable pour décider.</p>
+
+<h2 id="le-tableau-de-synthèse">Le tableau de synthèse<a class="anchor" href="#le-tableau-de-synthèse" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Type de décision</th><th>Domicile</th><th>Exemple dans ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Validité d'une valeur</td><td>Value object</td><td><code>TaskTitle</code>, <code>Email</code>, <code>UserName</code></td></tr>
+    <tr><td>Invariant d'un objet</td><td>Méthode d'entité</td><td><code>Task.complete()</code></td></tr>
+    <tr><td>Invariant d'un agrégat</td><td>Racine d'agrégat</td><td>voir <a href="./04-les-agregats.html">ch. 04</a></td></tr>
+    <tr><td>Règle métier sans propriétaire</td><td>Service de domaine</td><td>&mdash; (exemple <code>PricingService</code>)</td></tr>
+    <tr><td>Coordination inter-agrégats</td><td>Use case</td><td><code>CreateTask</code> vérifie l'owner</td></tr>
+    <tr><td>Policy du cas d'usage</td><td>Use case</td><td>pagination bornée, TTL de cache</td></tr>
+    <tr><td>Optimisation de lecture</td><td>Use case + port technique</td><td>cache-aside de <code>GetUser</code></td></tr>
+    <tr><td>Intégrité, unicité, transport</td><td>Infrastructure</td><td>FK, <code>UNIQUE</code>, index</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="le-test-décisif---qui-dautre-pourrait-lappeler--">Le test décisif : « qui d'autre pourrait l'appeler ? »<a class="anchor" href="#le-test-décisif---qui-dautre-pourrait-lappeler--" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Quand tu hésites, pose cette question :</p>
+
+<blockquote>
+  <p>Si demain cette opération est déclenchée par un import CSV, un cron ou un
+  message de broker &mdash; la règle doit-elle encore s'appliquer ?</p>
+</blockquote>
+
+<ul>
+  <li><strong>Oui, absolument</strong> → domaine. Elle est constitutive de l'objet.</li>
+  <li><strong>Oui, mais différemment selon le point d'entrée</strong> → application (policy).</li>
+  <li><strong>Non, c'est propre à ce canal</strong> → adaptateur (schéma HTTP, argument CLI).</li>
+</ul>
+
+<p>Ce projet rend le test très concret, parce que trois adaptateurs entrants
+existent réellement : ce qui doit valoir pour l'API, le CLI et le worker à la
+fois n'a rien à faire dans le router.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>« Règle métier » recouvre au moins quatre choses différentes : invariant de
+      valeur, invariant d'objet, règle sans propriétaire, policy applicative.</li>
+  <li>Le domaine porte ce qui est <strong>vrai de l'objet</strong> ; l'application
+      porte ce qui est <strong>vrai de ce cas d'usage</strong> ; l'infrastructure
+      porte ce qui est <strong>vrai de la technique</strong>.</li>
+  <li>Un service de domaine porte une <strong>décision métier</strong> sans
+      piloter le workflow ; ici, il est sans état et sans I/O.</li>
+  <li>Une garantie d'unicité se joue à deux niveaux : message côté use case,
+      garantie côté base.</li>
+  <li>Test décisif : « si un autre appelant déclenchait ça, la règle
+      tiendrait-elle encore ? »</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Nouvelle règle : <em>« un utilisateur ne peut pas avoir plus de 50 tâches
+        en cours »</em>. Réponds aux quatre questions, dans cet ordre :
+        <strong>a.</strong> où places-tu la règle ? <strong>b.</strong> pourquoi
+        pas dans <code>User</code> ? <strong>c.</strong> que se passe-t-il si
+        deux requêtes créent une tâche au même instant alors qu'il en reste une
+        de disponible ? <strong>d.</strong> quelle contrainte ou quel mécanisme
+        ajouterais-tu côté base pour que la limite tienne vraiment ?</li>
+    <li>Nouvelle règle : <em>« le titre d'une tâche ne peut pas dépasser 200
+        caractères »</em>. Elle est déjà exprimée à deux endroits dans ce projet.
+        Lesquels, et est-ce une duplication fautive ?</li>
+    <li>Nouvelle règle : <em>« la liste des tâches renvoyée par l'API est
+        plafonnée à 100 éléments »</em>. Domaine, application ou présentation ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-02">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./01-regle-de-dependance.html">&larr; 01. La règle de dépendance</a>
+  <a href="./03-le-domaine.html">03. Le domaine &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04. Réseau &mdash; Infrastructure &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Neuf NetworkPolicy d'ingress, une chaîne autorisée et tout le reste refusé, l'Ingress nginx et les consoles de développement en *.localhost.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html">Cours</a>
+    <a href="../infra/index.html" aria-current="true">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Sections de l'infrastructure">
+  <h2>Infrastructure</h2>
+  <ul>
+    <li><a href="./index.html">Vue d'ensemble</a></li>
+    <li><a href="./00-compose.html"><span class="num">00</span>Docker Compose</a></li>
+    <li><a href="./01-donnees.html"><span class="num">01</span>Les données</a></li>
+    <li><a href="./02-workloads.html"><span class="num">02</span>Les workloads</a></li>
+    <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
+    <li><a href="./04-reseau.html" aria-current="page"><span class="num">04</span>Réseau</a></li>
+    <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+  </ul>
+  <h2>Voir aussi</h2>
+  <ul>
+    <li><a href="../cours/index.html">Le cours</a></li>
+    <li><a href="../cours/01-regle-de-dependance.html">La règle de dépendance</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>04. Réseau</h1>
+  <p class="lede">Une chaîne d'appels autorisée, tout le reste refusé &mdash; et un
+  test qui le prouve plutôt que de l'affirmer.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Neuf <code>NetworkPolicy</code>, une par cible,
+  qui listent leurs sources autorisées. Pas de <em>default-deny</em> global : le
+  refus vient de l'existence même d'une politique sur la cible. Le frontend ne peut
+  <strong>jamais</strong> joindre PostgreSQL.
+</div>
+
+<h2 id="le-modèle-choisi">Le modèle choisi : une politique par cible<a class="anchor" href="#le-modèle-choisi" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Il y a deux façons d'écrire de la segmentation avec des
+<code>NetworkPolicy</code>, et le choix se paie différemment.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Default-deny global</th><th>Une politique par cible <span class="pill pill-ok">retenu</span></th></tr></thead>
+  <tbody>
+    <tr><td>Principe</td><td>Une politique vide bloque tout, on rouvre ensuite</td><td>Chaque cible déclare ses sources ; l'absence de politique = ouvert</td></tr>
+    <tr><td>Sûreté par défaut</td><td>Meilleure : un oubli ferme</td><td>Moindre : un oubli laisse ouvert</td></tr>
+    <tr><td>Risque à la mise en place</td><td>Élevé : casse les composants système (réplication CNPG, opérateurs)</td><td>Faible : on n'agit que sur ce qu'on comprend</td></tr>
+    <tr><td>Lisibilité</td><td>Il faut lire toutes les politiques pour savoir qui joint quoi</td><td>Une politique = une réponse à « qui peut me parler ? »</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le dépôt retient le second, et le dit : <em>« Pas de default-deny global (plus
+sûr avec les pods CNPG, sensibles à la réplication) »</em>. C'est un compromis
+assumé, pas une ignorance &mdash; et pour un cluster de démonstration dont l'objet
+est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
+
+<div class="note">
+  <strong>Le mécanisme qu'il faut avoir en tête</strong>
+  Dès qu'<em>au moins une</em> <code>NetworkPolicy</code> sélectionne un pod, ce pod
+  passe en « tout ce qui n'est pas listé est refusé » <strong>pour le type de trafic
+  concerné</strong>. Ici toutes les politiques déclarent
+  <code>policyTypes: [Ingress]</code> : l'entrant est donc verrouillé, et le
+  <strong>sortant reste libre</strong> &mdash; DNS compris, ce qui évite la panne
+  classique du premier default-deny mal posé.
+</div>
+
+<h2 id="la-chaîne-autorisée">La chaîne autorisée<a class="anchor" href="#la-chaîne-autorisée" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 940 430" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="ingress-nginx atteint le frontend sur le port 8080. Le frontend et Prometheus atteignent l'API sur 8000. L'API et le worker partagent les mêmes quatre cibles : le pooler sur 5432, RabbitMQ sur 5672, Valkey sur 6379 et Mailpit sur 1025. Le pooler atteint PostgreSQL, et le Job de migration l'atteint en direct. Le frontend, lui, ne peut pas joindre PostgreSQL : aucune politique ne l'autorise.">
+  <defs>
+    <marker id="fn4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="150" width="120" height="50" rx="7"/>
+      <rect x="178" y="150" width="120" height="50" rx="7"/>
+      <rect x="348" y="30" width="120" height="44" rx="7"/>
+      <rect x="348" y="268" width="120" height="48" rx="7"/>
+      <rect x="178" y="344" width="120" height="44" rx="7"/>
+      <rect x="556" y="94" width="134" height="44" rx="7"/>
+      <rect x="556" y="152" width="134" height="44" rx="7"/>
+      <rect x="556" y="210" width="134" height="44" rx="7"/>
+      <rect x="556" y="268" width="134" height="44" rx="7"/>
+      <rect x="760" y="94" width="140" height="44" rx="7"/>
+    </g>
+    <rect x="348" y="150" width="120" height="50" rx="7" fill="var(--raised)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="68" y="172">ingress-nginx</text>
+      <text x="238" y="172">frontend</text>
+      <text x="408" y="52">prometheus</text>
+      <text x="408" y="172">api</text>
+      <text x="408" y="290">mail-worker</text>
+      <text x="238" y="366">db-migrate</text>
+      <text x="623" y="114">pooler</text>
+      <text x="623" y="172">rabbitmq</text>
+      <text x="623" y="230">valkey</text>
+      <text x="623" y="288">mailpit</text>
+      <text x="830" y="114">postgres</text>
+    </g>
+    <g fill="var(--muted)" font-size="9.5" text-anchor="middle">
+      <text x="68" y="188">namespace</text>
+      <text x="238" y="188">nginx-unprivileged &#215;2</text>
+      <text x="408" y="188">&#215;2 → 6</text>
+      <text x="408" y="305">&#215;2</text>
+      <text x="238" y="380">Job</text>
+      <text x="623" y="128">PgBouncer &#215;2</text>
+      <text x="623" y="186">&#215;3</text>
+      <text x="623" y="244">cache</text>
+      <text x="623" y="302">SMTP de test</text>
+      <text x="830" y="128">CNPG &#215;3</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#fn4)">
+      <line x1="130" y1="175" x2="174" y2="175"/>
+      <line x1="300" y1="175" x2="344" y2="175"/>
+      <line x1="408" y1="76" x2="408" y2="146"/>
+      <line x1="512" y1="116" x2="552" y2="116"/>
+      <line x1="512" y1="174" x2="552" y2="174"/>
+      <line x1="512" y1="232" x2="552" y2="232"/>
+      <line x1="512" y1="290" x2="552" y2="290"/>
+      <line x1="692" y1="116" x2="756" y2="116"/>
+      <path d="M 300 366 L 830 366 L 830 142"/>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none">
+      <line x1="470" y1="175" x2="512" y2="175"/>
+      <line x1="470" y1="292" x2="512" y2="292"/>
+      <line x1="512" y1="116" x2="512" y2="292"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="9.5" text-anchor="middle">
+      <text x="152" y="168">8080</text>
+      <text x="322" y="168">8000</text>
+      <text x="532" y="109">5432</text>
+      <text x="532" y="167">5672</text>
+      <text x="532" y="225">6379</text>
+      <text x="532" y="283">1025</text>
+      <text x="724" y="109">5432</text>
+    </g>
+    <text x="422" y="112" fill="var(--muted)" font-size="9.5">8000</text>
+    <text x="565" y="358" fill="var(--muted)" font-size="10" text-anchor="middle">migrations : PostgreSQL en direct (DDL)</text>
+
+    <path d="M 238 202 L 238 246" fill="none" stroke="var(--danger)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <circle cx="238" cy="258" r="11" fill="var(--surface)" stroke="var(--danger)" stroke-width="1.5"/>
+    <text x="238" y="263" fill="var(--danger)" font-size="12" font-weight="700" text-anchor="middle">&#215;</text>
+    <text x="256" y="255" fill="var(--danger)" font-size="10.5" font-weight="600">frontend → postgres</text>
+    <text x="256" y="269" fill="var(--danger)" font-size="10">aucune politique ne l'autorise : refusé</text>
+
+    <text x="470" y="418" fill="var(--muted)" font-size="10.5" text-anchor="middle">Une politique d'ingress par cible ; tout ce qui n'est pas listé est refusé.</text>
+  </g>
+</svg>
+</figure>
+
+<h2 id="les-neuf-politiques">Les neuf politiques<a class="anchor" href="#les-neuf-politiques" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Cible</th><th>Sources autorisées</th><th>Ports</th></tr></thead>
+  <tbody>
+    <tr><td><code>frontend</code></td><td>namespace <code>ingress-nginx</code></td><td>8080</td></tr>
+    <tr><td><code>api</code></td><td><code>frontend</code>, <code>prometheus</code></td><td>8000</td></tr>
+    <tr><td>pooler <span class="pill">cnpg.io/podRole</span></td><td><code>api</code>, <code>mail-worker</code>, + opérateur CNPG</td><td>5432</td></tr>
+    <tr><td>postgres <span class="pill">cnpg.io/podRole</span></td><td>pods du cluster CNPG (pooler + réplication), Job <code>db-migrate</code>, opérateur</td><td>5432</td></tr>
+    <tr><td><code>rabbitmq</code></td><td><code>api</code>, <code>mail-worker</code> (5672) · ingress (15672) · lui-même (clustering) · opérateur</td><td>5672, 15672, epmd</td></tr>
+    <tr><td><code>valkey</code></td><td><code>api</code>, <code>mail-worker</code>, <code>redisinsight</code></td><td>6379</td></tr>
+    <tr><td><code>mailpit</code></td><td><code>api</code>, <code>mail-worker</code> (1025) · ingress (8025)</td><td>1025, 8025</td></tr>
+    <tr><td><code>prometheus</code></td><td>namespace <code>ingress-nginx</code></td><td>9090</td></tr>
+    <tr><td><code>redisinsight</code></td><td>namespace <code>ingress-nginx</code></td><td>5540</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Trois détails que la lecture rapide manque :</p>
+
+<ul>
+  <li><strong>Prometheus est autorisé à joindre l'API.</strong> Il scrape
+      <code>/metrics</code> sur le port 8000. Sans cette source dans
+      <code>allow-api</code>, la supervision tomberait silencieusement en même temps
+      que la segmentation serait activée.</li>
+  <li><strong>RabbitMQ doit pouvoir se parler à lui-même.</strong> Un cluster à 3
+      nœuds a besoin d'epmd et du port de distribution Erlang entre ses membres,
+      d'où une règle dont la source est… son propre label.</li>
+  <li><strong>Les opérateurs ont leur porte.</strong> CNPG (namespace
+      <code>cnpg-system</code>) et l'opérateur RabbitMQ
+      (<code>rabbitmq-system</code>) doivent atteindre leurs pods pour les gérer,
+      sonder leur état et déclencher les bascules. Les oublier, c'est un cluster qui
+      se fige dès la première panne.</li>
+</ul>
+
+<h2 id="le-cas-frontend--postgres">Le cas qui porte la leçon : frontend → postgres<a class="anchor" href="#le-cas-frontend--postgres" aria-label="Lien vers cette section">#</a></h2>
+
+<p>C'est le seul refus que le dépôt met en avant, parce qu'il correspond à un vrai
+scénario d'attaque : un frontend compromis &mdash; XSS, dépendance npm vérolée,
+image altérée &mdash; tenterait de joindre la base directement.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/network-policies.yaml
+metadata: { name: allow-postgres }
+spec:
+  podSelector: { matchLabels: { cnpg.io/podRole: instance } }
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector: { matchLabels: { cnpg.io/cluster: task-manager-db } }
+    - podSelector: { matchLabels: { job-name: db-migrate } }
+    ports:
+    - { protocol: TCP, port: 5432 }</code></pre></div>
+
+<p><code>frontend</code> n'apparaît nulle part : la connexion est refusée par
+l'absence, pas par une règle de blocage explicite. Et le README du dépôt précise
+que ce n'est pas une supposition &mdash; <em>« vérifié : un pod non listé sur la
+base time-out ; l'api passe »</em>. Sur un projet dont la thèse est la preuve
+plutôt que l'affirmation, tester une politique réseau est la moindre des choses :
+une <code>NetworkPolicy</code> non appliquée par le CNI ne produit
+<strong>aucune erreur</strong>, juste une fausse impression de sécurité.</p>
+
+<div class="warn">
+  <strong>Toutes les implémentations ne les appliquent pas</strong>
+  Une <code>NetworkPolicy</code> n'est qu'une intention : c'est le plugin réseau qui
+  la fait respecter. Certains CNI les ignorent purement et simplement. Ici c'est
+  <strong>kindnet</strong>, le CNI par défaut de Kind, et le comportement a été
+  vérifié. Sur un autre cluster, la première chose à faire est de reproduire ce
+  test.
+</div>
+
+<h2 id="lingress">L'Ingress : une entrée pour l'application, une pour les consoles<a class="anchor" href="#lingress" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Deux ressources distinctes, ce qui n'est pas un détail : la seconde se supprime
+d'un <code>kubectl delete</code> sans toucher à la première.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/ingress.yaml — l'application, sans hostname
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service: { name: frontend, port: { number: 80 } }</code></pre></div>
+
+<p>Aucun <code>host</code> : la règle attrape tout ce qui arrive, donc
+<code>http://localhost</code>. Le trafic entre par le control-plane, seul nœud à
+porter le mapping des ports 80/443 vers l'hôte et le label
+<code>ingress-ready=true</code> que cible le <code>nodeSelector</code> du
+contrôleur.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Console</th><th>URL</th><th>Service → port</th></tr></thead>
+  <tbody>
+    <tr><td>Application</td><td><code>http://localhost</code></td><td><code>frontend</code> → 80</td></tr>
+    <tr><td>Mailpit</td><td><code>http://mailpit.localhost</code></td><td><code>mailpit</code> → 8025</td></tr>
+    <tr><td>RabbitMQ</td><td><code>http://rabbitmq.localhost</code></td><td><code>rabbitmq</code> → 15672</td></tr>
+    <tr><td>RedisInsight</td><td><code>http://redisinsight.localhost</code></td><td><code>redisinsight</code> → 5540</td></tr>
+    <tr><td>Prometheus</td><td><code>http://prometheus.localhost</code></td><td><code>prometheus</code> → 9090</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>Pourquoi <code>*.localhost</code> fonctionne sans rien configurer</strong>
+  Avec <code>systemd-resolved</code>, tout nom en <code>.localhost</code> résout
+  déjà vers <code>127.0.0.1</code>. Sinon, une ligne dans <code>/etc/hosts</code>
+  suffit. C'est ce qui permet d'exposer cinq interfaces sur le port 80 sans
+  <code>port-forward</code> ni ports exotiques à retenir.
+</div>
+
+<p>Les identifiants de la console RabbitMQ ne sont écrits nulle part : l'opérateur
+les génère dans le secret <code>rabbitmq-default-user</code>. On les lit avec
+<code>kubectl get secret rabbitmq-default-user -n task-manager -o jsonpath='{.data.username}' | base64 -d</code>.</p>
+
+<h2 id="le-service-du-frontend">Le service du frontend : 80 dehors, 8080 dedans<a class="anchor" href="#le-service-du-frontend" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="yaml"><pre><code>spec:
+  selector: { app: frontend }
+  ports:
+  - port: 80          # ce que l'Ingress appelle
+    targetPort: 8080  # ce que nginx-unprivileged écoute</code></pre></div>
+
+<p>Le décalage vient du durcissement
+(<a href="./02-workloads.html#durcissement">ch. 02</a>) : un processus non-root ne
+peut pas se lier à un port inférieur à 1024. L'image écoute donc sur 8080, et le
+Service rétablit le 80 attendu. La <code>NetworkPolicy</code> du frontend cible
+bien <strong>8080</strong>, le port du conteneur &mdash; c'est une erreur classique
+que d'y écrire 80.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Une <strong>politique par cible</strong> : plus lisible et moins risqué qu'un
+      default-deny global, au prix d'une sûreté par défaut moindre.</li>
+  <li>Une politique <code>Ingress</code> ne verrouille que l'entrant : l'egress,
+      <strong>DNS compris</strong>, reste libre.</li>
+  <li>Ne pas oublier les sources non applicatives : <strong>Prometheus</strong>, le
+      <strong>clustering RabbitMQ</strong>, et les <strong>opérateurs</strong>.</li>
+  <li>Une <code>NetworkPolicy</code> non appliquée par le CNI échoue en silence :
+      il faut la <strong>tester</strong>.</li>
+  <li>Deux Ingress séparés : l'application d'un côté, les consoles de dev de
+      l'autre &mdash; on peut retirer les secondes sans toucher à la première.</li>
+  <li>Le durcissement se propage jusqu'au réseau : port 8080 non privilégié, donc
+      <code>targetPort: 8080</code> et une politique qui cible 8080.</li>
+</ul>
+
+<nav class="pager">
+  <a href="./03-resilience.html">&larr; 03. Résilience</a>
+  <a href="./05-exploitation.html">05. Exploitation &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Infrastructure FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

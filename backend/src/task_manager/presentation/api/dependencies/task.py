@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from fastapi import Depends
+
+from task_manager.application.task.queries import TaskQueryPort
 from task_manager.application.task.use_cases.complete_task import CompleteTask
 from task_manager.application.task.use_cases.create_task import CreateTask
 from task_manager.application.task.use_cases.delete_task import DeleteTask
@@ -11,11 +16,13 @@ from task_manager.application.task.use_cases.list_tasks_by_owner import ListTask
 from task_manager.application.task.use_cases.rename_task import RenameTask
 from task_manager.application.task.use_cases.share_task import ShareTask
 from task_manager.application.task.use_cases.start_task import StartTask
+from task_manager.infrastructure.persistence.task.queries import SqlAlchemyTaskQueryService
 from task_manager.presentation.api.dependencies.messaging import MessageAdapterDep
 from task_manager.presentation.api.dependencies.repositories import (
     TaskRepositoryDep,
     UserRepositoryDep,
 )
+from task_manager.presentation.api.dependencies.session import SessionDep
 
 
 def get_create_task(tasks: TaskRepositoryDep, users: UserRepositoryDep) -> CreateTask:
@@ -53,3 +60,14 @@ def get_delete_task(tasks: TaskRepositoryDep) -> DeleteTask:
 
 def get_share_task(tasks: TaskRepositoryDep, messaging: MessageAdapterDep) -> ShareTask:
     return ShareTask(tasks, messaging)
+
+
+# ── Chemin de LECTURE ────────────────────────────────────────────────────────
+# Pas de use case ici : il n'y aurait rien à orchestrer. Le router appelle le port
+# directement — le chemin de lecture a deux niveaux là où l'écriture en a quatre
+# (router → use case → domaine → repository).
+def get_task_query_service(session: SessionDep) -> TaskQueryPort:
+    return SqlAlchemyTaskQueryService(session)
+
+
+TaskQueryDep = Annotated[TaskQueryPort, Depends(get_task_query_service)]

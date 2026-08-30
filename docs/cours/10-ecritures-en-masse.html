@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10. Écrire en masse &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Reconstituer plutôt que créer, bulk writers, ON CONFLICT et sa limite sur les clés étrangères, commit par lot via UnitOfWorkPort, et pourquoi restaurer n'est pas importer.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html" aria-current="page"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>10. Écrire en masse sans casser le domaine</h1>
+  <p class="lede">Le contrepoint du chapitre précédent : ici, on ne peut pas
+  jeter le domaine &mdash; mais on peut cesser de lui faire payer les
+  allers-retours.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Le chapitre précédent jetait le domaine pour
+  lire. On ne peut pas faire la même chose pour écrire : le domaine <strong>est</strong>
+  la protection, et une écriture qui le contourne dépose dans la base des états que
+  personne n'a validés. Mais « passer par le domaine » ne veut pas dire « passer par
+  le use case de création » : <code>create()</code> sait fabriquer du neuf, pas
+  <strong>reconstituer</strong> de l'existant. Le coût, lui, n'est jamais dans le
+  domaine &mdash; il est dans les allers-retours.
+</div>
+
+<p>Le chapitre 09 s'achevait sur une règle qui ne bouge pas : <em>une écriture
+repasse toujours par les agrégats</em>. Reste à savoir ce que ça coûte quand il y
+en a cent mille d'un coup &mdash; et ce que ça signifie exactement.</p>
+
+<p>Le cas concret de ce dépôt : reprendre l'export NDJSON du chapitre précédent et
+le <strong>rejouer dans un autre déploiement</strong>. Prétexte assumé &mdash; on
+verra plus bas que ce scénario précis mériterait plutôt un <code>pg_dump</code>
+&mdash; mais il fallait une raison d'écrire beaucoup pour montrer ce que coûte une
+écriture en masse.</p>
+
+<h2 id="lasymétrie-avec-la-lecture">L'asymétrie avec la lecture<a class="anchor" href="#lasymétrie-avec-la-lecture" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Elle mérite d'être posée clairement, parce que la tentation est grande de
+transposer le raisonnement du chapitre 09.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Lecture</th><th>Écriture</th></tr></thead>
+  <tbody>
+    <tr><td>Ce que protègent les agrégats</td><td>rien &mdash; on ne fait que regarder</td><td>les invariants du modèle</td></tr>
+    <tr><td>Peut-on les court-circuiter&nbsp;?</td><td><strong>oui</strong>, c'est même le bon usage</td><td><strong>non</strong>, jamais</td></tr>
+    <tr><td>Ce qu'on optimise</td><td>la requête elle-même</td><td>le <strong>transport</strong> vers la base</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Un query service peut jeter le domaine parce qu'une projection n'engage aucun
+invariant. Un import ne le peut pas : il introduit dans le système des états dont
+il faudra répondre. Ce qu'on a le droit d'optimiser, c'est la façon dont ces états
+atteignent la base &mdash; pas la vérification qu'ils sont valides.</p>
+
+<h2 id="le-piège--create-ne-sait-pas-représenter-lexistant">Le piège : <code>create()</code> ne sait pas représenter l'existant<a class="anchor" href="#le-piège--create-ne-sait-pas-représenter-lexistant" aria-label="Lien vers cette section">#</a></h2>
+
+<p>C'est l'erreur qu'on ne voit qu'en essayant.</p>
+
+<div class="snippet" data-lang="python"><pre><code>@classmethod
+def create(cls, *, owner_id, title, description=None) -&gt; Task:
+    return cls(
+        id=TaskId.generate(),      # ← un NOUVEL identifiant
+        status=TaskStatus.TODO,    # ← forcément TODO
+        created_at=_now(),         # ← forcément maintenant
+        completed_at=None,
+    )</code></pre></div>
+
+<p>L'export transporte un <code>task_id</code>, un <code>status</code> qui vaut
+peut-être <code>done</code>, un <code>created_at</code> d'il y a trois mois et un
+<code>completed_at</code>. Importer via <code>CreateTask</code> puis
+<code>complete()</code> produirait <strong>trois corruptions silencieuses</strong> :
+un identifiant neuf &mdash; donc la référence d'origine perdue et l'import plus
+rejouable &mdash;, une date de création réécrite à aujourd'hui, une date de
+complétion fausse.</p>
+
+<p>On aurait l'impression d'être rigoureux, <em>puisqu'on passe par le métier</em>,
+tout en détruisant les données. C'est le genre de bug qui ne se voit qu'à la
+réconciliation, six mois plus tard.</p>
+
+<h2 id="reconstituer-ce-nest-pas-contourner">Reconstituer, ce n'est pas contourner<a class="anchor" href="#reconstituer-ce-nest-pas-contourner" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le bon point d'entrée est le <strong>constructeur</strong>, exactement ce que
+fait déjà <code>mappers.to_domain</code> quand il relit une ligne. Et la validation
+ne disparaît pas : le constructeur construit <code>TaskId</code>,
+<code>UserId</code>, <code>TaskTitle</code>, <code>TaskStatus</code> &mdash; un titre
+vide est refusé à l'import comme ailleurs.</p>
+
+<blockquote>
+  <p><code>create()</code> + les transitions répondent à «&nbsp;<strong>cet état
+  est-il atteignable&nbsp;?</strong>&nbsp;»<br>
+  Le constructeur + les value objects répondent à «&nbsp;<strong>cet état est-il
+  valide&nbsp;?</strong>&nbsp;»</p>
+</blockquote>
+
+<p>Pour des entités qui existaient déjà ailleurs, la seconde question est la bonne.
+La première est même activement nuisible : elle refuserait une tâche terminée sous
+prétexte qu'on ne peut pas <em>naître</em> terminé.</p>
+
+<p>Ce que la reconstitution ne rejoue pas, ce sont les règles de
+<strong>transition</strong> &mdash; et c'est cohérent : elles portent sur des
+changements d'état, elles n'ont pas de sens sur un état au repos.</p>
+
+<h3 id="le-trou-que-les-value-objects-ne-voient-pas">Le trou que les value objects ne voient pas<a class="anchor" href="#le-trou-que-les-value-objects-ne-voient-pas" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un value object valide <strong>un</strong> champ. Il ne peut rien dire d'une
+incohérence entre plusieurs : un <code>status = "todo"</code> accompagné d'un
+<code>completed_at</code> renseigné passe sans broncher. C'est un invariant de
+l'<strong>entité</strong>, et il faut donc le poser là :</p>
+
+<div class="snippet" data-lang="python"><pre><code>@classmethod
+def reconstitute(cls, *, id, owner_id, title, description, status,
+                 created_at, completed_at) -&gt; Task:
+    if status is TaskStatus.DONE and completed_at is None:
+        raise InconsistentTaskState("une tâche terminée doit porter une date de complétion")
+    if status is not TaskStatus.DONE and completed_at is not None:
+        raise InconsistentTaskState("une tâche non terminée ne peut pas porter de date de complétion")
+    if completed_at is not None and completed_at &lt; created_at:
+        raise InconsistentTaskState("la complétion précède la création")
+    return cls(...)</code></pre></div>
+
+<p><code>reconstitute</code> est délibérément <strong>plus stricte que le
+mapper</strong>. <code>to_domain</code> relit <em>notre</em> base, dont nous sommes
+la source de vérité ; un import relit un fichier dont nous ne garantissons rien. La
+même opération technique, deux niveaux de confiance &mdash; et donc deux méthodes.</p>
+
+<h2 id="où-part-vraiment-le-temps">Où part vraiment le temps<a class="anchor" href="#où-part-vraiment-le-temps" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Pas dans le domaine. Construire 100 000 agrégats avec leurs value objects, c'est
+du CPU pur : de l'ordre de la seconde. Le coût est ailleurs, et il se compte en
+lisant le chemin unitaire :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Étape</th><th>Coût par ligne</th></tr></thead>
+  <tbody>
+    <tr><td><code>CreateTask</code> → <code>users.exists(owner_id)</code></td><td>1 <code>SELECT</code></td></tr>
+    <tr><td><code>repository.save()</code> → <code>session.get(TaskModel, id)</code></td><td>1 <code>SELECT</code></td></tr>
+    <tr><td>flush</td><td>1 <code>INSERT</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Trois allers-retours par ligne</strong>, soit 300 000 requêtes pour
+100 000 tâches. C'est le N+1 du chapitre 09, vu du côté écriture.</p>
+
+<p>D'où le principe : <strong>garder le domaine en mémoire, grouper les I/O.</strong></p>
+
+<h3 id="la-mesure">La mesure<a class="anchor" href="#la-mesure" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Aller-retour complet sur ce dépôt &mdash; export de 2 000 tâches réparties entre
+50 propriétaires, base vidée, puis import &mdash; en comptant les requêtes réellement
+émises :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Chemin</th><th>Requêtes SQL</th></tr></thead>
+  <tbody>
+    <tr><td>Unitaire (<code>CreateTask</code> ligne à ligne)</td><td><strong>6 000</strong> (2 000 <code>INSERT</code> + 4 000 <code>SELECT</code>)</td></tr>
+    <tr><td>Import groupé (lots de 1 000)</td><td><strong>5</strong> (4 <code>INSERT</code> + 1 <code>SELECT</code>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Rejouer le même fichier insère <strong>0</strong> ligne.</p>
+
+<h2 id="léchelle-doptimisation">L'échelle d'optimisation<a class="anchor" href="#léchelle-doptimisation" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>Geste</th><th>Effet</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Supprimer le contrôle d'existence ligne à ligne</td><td>N <code>SELECT</code> → 0 ou 1 par lot</td></tr>
+    <tr><td>2</td><td>Supprimer la lecture-avant-écriture : à l'import on sait qu'on insère</td><td>N <code>SELECT</code> → 0</td></tr>
+    <tr><td>3</td><td><code>INSERT</code> multi-lignes (<em>insertmanyvalues</em>) par lots</td><td>N <code>INSERT</code> → N/1000</td></tr>
+    <tr><td>4</td><td>Très gros volumes : <code>COPY</code> vers une table de transit, puis <code>INSERT … SELECT</code></td><td>~5–10× sur l'insertion</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le geste 1 mérite un mot. <code>CreateTask</code> vérifie l'existence du
+propriétaire par une requête ; ici l'export est <strong>dénormalisé</strong> &mdash;
+chaque ligne porte son propriétaire &mdash; donc on l'insère avant la tâche et la
+question ne se pose plus. Une requête groupée aurait déjà été un progrès ; zéro est
+mieux.</p>
+
+<p>Et un choix des chapitres précédents devient ici un avantage décisif : les
+<strong>identités sont des UUIDv7 générées par le domaine</strong>. Le lot entier se
+construit donc en mémoire avant de toucher la base &mdash; ni <code>RETURNING</code>,
+ni aller-retour pour apprendre un identifiant &mdash; et le préfixe temporel maintient
+les insertions au bord droit de l'index, là où un <code>uuid4()</code> fragmenterait
+le B-tree.</p>
+
+<h2 id="on-conflict-et-sa-limite"><code>ON CONFLICT</code> et sa limite<a class="anchor" href="#on-conflict-et-sa-limite" aria-label="Lien vers cette section">#</a></h2>
+
+<p>L'insertion groupée s'appuie sur <code>ON CONFLICT DO NOTHING</code> : une
+identité déjà présente est ignorée plutôt qu'écrasée ou remontée en erreur. C'est ce
+qui rend l'import <strong>idempotent</strong>, donc reprenable.</p>
+
+<div class="warn">
+  <strong>La limite qu'on ne devine pas</strong>
+  <p><code>ON CONFLICT</code> absorbe les conflits d'unicité. Il <strong>n'absorbe
+  pas</strong> les violations de clé étrangère.</p>
+</div>
+
+<p>La nuance a l'air technique ; elle est structurante. Si un utilisateur du fichier
+porte un e-mail déjà détenu par une <strong>autre</strong> identité, il est ignoré
+&mdash; et ses tâches violent alors la clé étrangère, ce qui fait échouer
+l'<code>INSERT</code> <strong>entier</strong>. Une ligne douteuse emporte les 999
+autres.</p>
+
+<p>Il faut donc savoir qui est réellement entré, et c'est là que le contrôle groupé
+revient : une requête par <strong>lot</strong>, et seulement quand un utilisateur a
+été ignoré. Sur un import dans une base vierge &mdash; le cas courant &mdash; elle ne
+coûte rien.</p>
+
+<p>Cette limite mérite d'être connue pour elle-même : c'est un cas où l'intuition
+(«&nbsp;<code>DO NOTHING</code> va tout absorber&nbsp;») est fausse, et où seule
+l'exécution contre un vrai PostgreSQL le dit.</p>
+
+<h2 id="la-transaction--ni-une-par-ligne-ni-une-pour-tout">La transaction : ni une par ligne, ni une pour tout<a class="anchor" href="#la-transaction--ni-une-par-ligne-ni-une-pour-tout" aria-label="Lien vers cette section">#</a></h2>
+
+<p>C'est ici que le <a href="./08-transactions-et-erreurs.html">chapitre 08</a> se
+nuance, et il faut le dire franchement.</p>
+
+<p>La règle posée là-bas &mdash; <em>les repositories ne committent jamais, la
+frontière transactionnelle appartient à l'adaptateur driving et entoure le use
+case</em> &mdash; reste vraie pour tout ce qui répond à une requête. Un import en
+masse est le contre-exemple assumé.</p>
+
+<p>Une transaction unique de dix minutes serait un <strong>défaut</strong>, pas une
+garantie :</p>
+
+<ul>
+  <li>avec <strong>PgBouncer en mode transaction</strong>, elle épingle une connexion
+      serveur pendant toute sa durée &mdash; sur un pool de 20, c'est 5&nbsp;% de la
+      capacité retirée ;</li>
+  <li>le WAL enfle, les lignes mortes s'accumulent ;</li>
+  <li>un échec à 99&nbsp;% perd les 99&nbsp;%.</li>
+</ul>
+
+<p>On découpe donc en lots, ce qui suppose de committer <strong>pendant</strong> le
+use case.</p>
+
+<h3 id="le-port-unitofwork">Le port <code>UnitOfWork</code><a class="anchor" href="#le-port-unitofwork" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Comment committer sans qu'un use case connaisse SQLAlchemy&nbsp;? En l'exprimant
+comme un besoin, c'est-à-dire &mdash; <a href="./06-application-et-ports.html">chapitre
+06</a> &mdash; par un port :</p>
+
+<div class="snippet" data-lang="python"><pre><code>class UnitOfWorkPort(ABC):
+    """Rend durable ce qui a été écrit depuis le dernier point d'acquisition."""
+
+    @abstractmethod
+    async def commit(self) -&gt; None: ...</code></pre></div>
+
+<p>Le use case dit «&nbsp;ce lot est acquis&nbsp;» ; l'adaptateur sait que cela
+signifie <code>session.commit()</code>. La règle de dépendance est intacte.</p>
+
+<p>Trois remarques sur ce port, parce qu'il est facile d'en mésuser :</p>
+
+<ul>
+  <li><strong>Ce n'est pas le motif <em>Unit of Work</em> complet</strong> de Fowler,
+      qui suit les objets modifiés et décide quoi écrire. Ici, la session SQLAlchemy
+      joue déjà ce rôle ; le port n'expose que le <strong>point d'acquisition</strong>.</li>
+  <li><strong>Il ne rend pas le commit banal.</strong> C'est la seule classe du dépôt,
+      hors adaptateurs driving, à committer, et un use case doit le <strong>demander
+      explicitement</strong> par son constructeur. On ne l'obtient jamais par effet de
+      bord d'un repository &mdash; ce qui reste la règle du chapitre 08.</li>
+  <li><strong>Il ne se justifie que par la durée.</strong> Un use case qui répond à une
+      requête HTTP n'a aucune raison de le prendre : sa transaction est déjà à la bonne
+      taille. Le port existe parce que le traitement dure, pas parce qu'il écrit
+      beaucoup.</li>
+</ul>
+
+<h3 id="ce-quon-échange">Ce qu'on échange<a class="anchor" href="#ce-quon-échange" aria-label="Lien vers cette section">#</a></h3>
+
+<p>L'import <strong>n'est pas atomique</strong>, et c'est le comportement voulu. On
+échange l'atomicité globale contre la <strong>reprise</strong> &mdash; ce qui n'est
+acceptable que parce que les écritures sont idempotentes. Les deux décisions se
+tiennent : sans idempotence, un import non atomique serait ingérable ; sans découpage,
+l'idempotence serait inutile.</p>
+
+<p>C'est le même raisonnement que l'<em>at-least-once</em> du
+<a href="./11-cache-et-evenements.html">chapitre suivant</a> : on ne cherche pas à
+garantir qu'une opération ne s'exécutera qu'une fois, on rend la seconde exécution
+inoffensive.</p>
+
+<h2 id="rendre-un-rapport-pas-un-verdict">Rendre un rapport, pas un verdict<a class="anchor" href="#rendre-un-rapport-pas-un-verdict" aria-label="Lien vers cette section">#</a></h2>
+
+<p>À 100 000 lignes, «&nbsp;tout ou rien&nbsp;» est un mauvais contrat : une seule
+ligne douteuse condamnerait le lot. Le use case rend donc un bilan &mdash; lignes
+lues, insérées, déjà présentes, <strong>rejetées avec leur raison</strong>.</p>
+
+<p>Et c'est l'argument le moins évident en faveur du domaine dans un import. Un
+<code>COPY</code> brut sur 100 000 lignes rend une erreur PostgreSQL opaque à la ligne
+47 231 et s'arrête là. Le domaine, lui, sait dire :</p>
+
+<div class="snippet" data-lang="text"><pre><code>rang 47231 (01930000-…) : Adresse e-mail invalide : 'ada@@example.com'.</code></pre></div>
+
+<p>Les exceptions métier ne servent pas qu'à protéger la base : elles rendent l'échec
+<strong>diagnosticable</strong>. C'est un bénéfice qu'on n'attend pas d'une couche
+«&nbsp;architecture&nbsp;», et c'est souvent celui qui convainc.</p>
+
+<h2 id="restaurer-nest-pas-importer">Restaurer n'est pas importer<a class="anchor" href="#restaurer-nest-pas-importer" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le piège le plus coûteux n'est pas de mal optimiser : c'est de se tromper de
+catégorie. Avant d'écrire une ligne, il faut trancher.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Restauration</th><th>Import</th></tr></thead>
+  <tbody>
+    <tr><td>D'où viennent les données</td><td>du même système, même version</td><td>d'ailleurs, ou d'un fichier édité</td></tr>
+    <tr><td>L'état était-il déjà valide ici&nbsp;?</td><td>oui</td><td>on n'en sait rien</td></tr>
+    <tr><td>Le bon outil</td><td><code>pg_dump</code> / <code>pg_restore</code></td><td>le domaine</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Faire transiter une restauration par le métier serait plus lent, plus fragile et
+sans bénéfice : on revaliderait des données que l'on a soi-même produites.
+Inversement, importer des données étrangères par <code>pg_restore</code>, c'est
+renoncer à toute garantie.</p>
+
+<div class="note">
+  <strong>Et ce dépôt, alors ?</strong>
+  <p>Appliqué honnêtement, ce critère range le scénario implémenté ici &mdash; même
+  schéma, même version, d'un déploiement à l'autre &mdash; du côté de la
+  <strong>restauration</strong>. <code>pg_dump</code> ferait le travail, plus vite,
+  sans une ligne de code et sans rien perdre. L'import de ce dépôt est donc un
+  <strong>support pédagogique</strong> : il fallait une écriture coûteuse pour
+  montrer ce qu'elle coûte, et à quoi ressemble le chemin correct quand elle est
+  justifiée.</p>
+  <p>Ce n'est pas une coquetterie d'auteur. C'est la question à poser
+  <strong>avant</strong> toute l'ingénierie de ce chapitre : <em>ai-je seulement
+  besoin d'un import&nbsp;?</em> La réponse est souvent non, et elle épargne alors
+  un use case, deux ports, deux adaptateurs et leurs tests. Le meilleur code
+  d'import reste celui qu'on n'écrit pas.</p>
+</div>
+
+<h3 id="et-le-format-">Et le format ?<a class="anchor" href="#et-le-format-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Ce dépôt réutilise le DTO d'export <code>TaskWithOwner</code> comme format
+d'import. C'est un raccourci <strong>assumé mais critiquable</strong> :
+<code>TaskWithOwner</code> est un modèle de <strong>lecture</strong>, dessiné pour un
+bouton dans une interface. Le lier au chemin d'import signifie que le jour où l'on
+ajoute une colonne pour l'affichage, on change le format d'échange sans le savoir.</p>
+
+<p>Le défaut s'est manifesté aussitôt, et sa correction est plus instructive que le
+défaut lui-même. L'export ne transportait pas <code>description</code> : un
+aller-retour perdait donc les descriptions. Pour que l'import soit fidèle, on a
+ajouté le champ au DTO d'<strong>export</strong> &mdash; c'est-à-dire au modèle de
+<strong>lecture</strong>.</p>
+
+<p>Regarde bien le sens de ce qui vient de se passer. <code>TaskWithOwner</code>
+porte désormais une colonne qu'<strong>aucun écran n'affiche</strong>, présente
+uniquement pour le chemin d'écriture. Le couplage annoncé s'est réalisé, mais dans
+l'autre sens : ce n'est pas l'affichage qui a pollué l'import, c'est l'import qui a
+pollué l'affichage. Un format d'échange dédié aurait absorbé le besoin sans toucher
+au modèle de lecture.</p>
+
+<p>Un vrai transfert entre déploiements mérite son propre format,
+<strong>versionné</strong>, et découplé de ce que l'écran affiche.</p>
+
+<p>Et le raccourci se paie tout de suite, pas plus tard : l'API diffuse du NDJSON,
+tandis que le bouton du frontend enregistre un <strong>tableau JSON</strong>
+&mdash; deux formats pour la même donnée, dont aucun n'est spécifié quelque part.
+Le premier fichier téléchargé depuis l'interface s'est donc révélé
+<strong>inimportable</strong> par le CLI du même dépôt. Le lecteur accepte désormais
+les deux, ce qui est un rattrapage, pas une conception : un format d'échange qui
+n'existe que dans le code qui l'écrit finit toujours par diverger de celui qui le
+lit.</p>
+
+<h2 id="où-ça-vit">Où ça vit<a class="anchor" href="#où-ça-vit" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Élément</th><th>Emplacement</th></tr></thead>
+  <tbody>
+    <tr><td><code>Task.reconstitute</code> / <code>User.reconstitute</code></td><td><code>domain/&lt;ctx&gt;/entities.py</code></td></tr>
+    <tr><td><code>InconsistentTaskState</code></td><td><code>domain/task/exceptions.py</code></td></tr>
+    <tr><td><code>TaskBulkWriterPort</code>, <code>UserBulkWriterPort</code></td><td><code>application/&lt;ctx&gt;/bulk.py</code></td></tr>
+    <tr><td><code>UnitOfWorkPort</code></td><td><code>application/shared/unit_of_work.py</code></td></tr>
+    <tr><td><code>ImportTasks</code>, <code>ImportReport</code></td><td><code>application/task/</code></td></tr>
+    <tr><td><code>SqlAlchemy*BulkWriter</code>, <code>SqlAlchemyUnitOfWork</code></td><td><code>infrastructure/persistence/</code></td></tr>
+    <tr><td>Commande <code>import-tasks</code></td><td><code>presentation/cli/app.py</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Deux choix de structure méritent d'être justifiés.</p>
+
+<p><strong>Un port séparé plutôt qu'un <code>save_all</code> sur le repository.</strong>
+Le repository est le port de cycle de vie de l'<strong>agrégat</strong> : il parle en
+<code>Task</code>, sert les écritures unitaires et garantit un contrat de
+lecture-modification-écriture. Y greffer une écriture groupée le transformerait peu à
+peu en couche d'accès générique. Le bulk writer est un besoin distinct, il a son port
+&mdash; symétrique du query service du
+<a href="./09-lectures-et-query-services.html">chapitre 09</a>.</p>
+
+<p><strong>Une commande CLI, pas une route HTTP.</strong> Un import tient des minutes ;
+une requête HTTP doit rendre la main. C'est l'illustration la plus nette du principe du
+chapitre 08 : la transaction entoure <strong>le use case</strong>, et l'adaptateur
+driving qui la porte n'est pas forcément HTTP.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>En lecture on jette le domaine ; en écriture on ne le peut pas.</strong>
+      C'est l'asymétrie qui gouverne tout le reste.</li>
+  <li>«&nbsp;Passer par le domaine&nbsp;» ≠ «&nbsp;passer par le use case de
+      création&nbsp;». <code>create()</code> fabrique du neuf,
+      <strong><code>reconstitute()</code> relit de l'existant</strong>.</li>
+  <li>Les invariants <strong>inter-champs</strong> ne peuvent pas vivre dans un value
+      object : ils appartiennent à l'entité, et c'est la reconstitution qui les
+      rejoue.</li>
+  <li><strong>Le domaine n'est pas le coût.</strong> Les allers-retours le sont.</li>
+  <li><code>ON CONFLICT</code> absorbe les conflits d'unicité, <strong>pas</strong> les
+      violations de clé étrangère.</li>
+  <li>Un traitement long <strong>découpe sa transaction</strong>, et le demande
+      explicitement par un <code>UnitOfWorkPort</code>. Il échange l'atomicité contre la
+      reprise &mdash; ce que seule l'<strong>idempotence</strong> rend acceptable.</li>
+  <li>Un import rend un <strong>rapport</strong>, pas un verdict. Les exceptions métier
+      rendent l'échec diagnosticable.</li>
+  <li><strong>Restaurer ≠ importer.</strong> Se tromper de catégorie coûte plus cher
+      que mal optimiser &mdash; et la bonne catégorie supprime parfois le besoin
+      d'écrire du code. L'import de ce dépôt relève, par son propre critère, du
+      <code>pg_dump</code> : il est là pour l'exemple.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>On te demande d'exposer l'import en <code>POST /api/v1/imports/tasks</code>,
+        «&nbsp;pour que le front puisse déclencher la reprise&nbsp;». <strong>a.</strong>
+        deux raisons techniques de refuser ; <strong>b.</strong> quelle forme
+        donnerais-tu à la fonctionnalité si le besoin est réel&nbsp;?</li>
+    <li>Un collègue propose de supprimer <code>Task.reconstitute</code> et d'appeler
+        directement le constructeur, «&nbsp;puisque c'est ce qu'il fait&nbsp;».
+        Qu'est-ce qu'on perd exactement&nbsp;?</li>
+    <li>L'import tourne sur un fichier de 5 millions de lignes et sature la mémoire. Où
+        chercherais-tu la fuite en premier, sachant que le use case consomme un
+        générateur&nbsp;?</li>
+    <li>On veut que l'import <strong>mette à jour</strong> les tâches déjà présentes au
+        lieu de les ignorer (<code>DO UPDATE</code> plutôt que <code>DO NOTHING</code>).
+        Quel invariant du chapitre 04 cela met-il en danger, et que faudrait-il faire à
+        la place&nbsp;?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-10">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./09-lectures-et-query-services.html">&larr; 09. Lire sans passer par le domaine</a>
+  <a href="./11-cache-et-evenements.html">11. Cache &amp; événements &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

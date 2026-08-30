@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastAPI Hexagonal &mdash; une référence exécutable, pas un schéma</title>
+<meta name="description" content="Un dépôt à lire et à copier pour faire du FastAPI hexagonal comme en vrai : DDD tactique, contrats d'architecture vérifiés en CI, de Docker Compose à Kubernetes. Cours de 15 chapitres inclus.">
+<link rel="stylesheet" href="./assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+<meta property="og:title" content="FastAPI Hexagonal">
+<meta property="og:description" content="Une référence exécutable : architecture hexagonale vérifiée par import-linter, DDD tactique, de Compose à Kind. Cours inclus.">
+<meta property="og:type" content="website">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="./index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="./cours/index.html">Cours</a>
+    <a href="./infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<main class="landing" id="content">
+
+<header class="hero">
+  <h1>FastAPI Hexagonal</h1>
+  <p class="lede"><strong>Une référence exécutable, pas un schéma.</strong>
+  Un dépôt à lire et à copier pour faire du FastAPI hexagonal comme en vrai, avec
+  les filets de sécurité et le déploiement qui vont avec &mdash; pas un CRUD
+  déguisé en slides.</p>
+  <div class="cta">
+    <a class="primary" href="./cours/index.html">Lire le cours</a>
+    <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">Le dépôt</a>
+  </div>
+</header>
+
+<h2 id="pourquoi">Pourquoi ce dépôt existe<a class="anchor" href="#pourquoi" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Dans une application mal structurée, le code métier finit par se dissoudre
+dans les détails techniques. On ne s'en aperçoit pas en écrivant : on s'en
+aperçoit en essayant de tester une règle sans lever une base, en changeant
+d'outil, ou en cherchant six mois plus tard où vit une décision.</p>
+
+<p>Le symptôme n'est pas esthétique. C'est qu'une règle comme
+<em>« une tâche terminée ne peut pas être terminée deux fois »</em> n'a
+<strong>pas de domicile</strong> : elle est réécrite dans un router, oubliée dans
+un worker, contournée par un script d'import. Ce dépôt donne une adresse à
+chaque type de décision, et vérifie mécaniquement qu'elles y restent.</p>
+
+<p>Le métier &mdash; un gestionnaire de tâches &mdash; est volontairement simple.
+Il n'est pas le produit : le <em>comment</em> est le produit.</p>
+
+<h2 id="preuve">La règle est vérifiée, pas affichée<a class="anchor" href="#preuve" aria-label="Lien vers cette section">#</a></h2>
+
+<p>« Le domaine ne dépend d'aucun framework » est une phrase que tout le monde
+écrit dans son README. Ici, c'est un test qui casse le build. Ajoute un import
+de SQLAlchemy dans une entité du domaine, lance <code>make imports</code>, et
+voilà ce que la CI renvoie :</p>
+
+<div class="snippet" data-lang="console"><pre><code>$ make imports
+
+---------
+Contracts
+---------
+
+Analyzed 119 files, 355 dependencies.
+-------------------------------------
+
+Architecture hexagonale (dépendances vers l'intérieur) KEPT
+Domaine sans framework BROKEN
+
+Contracts: 1 kept, 1 broken.
+
+----------------
+Broken contracts
+----------------
+
+Domaine sans framework
+----------------------
+
+task_manager.domain is not allowed to import sqlalchemy:
+
+-   task_manager.domain.task.entities -&gt; sqlalchemy (l.10)</code></pre></div>
+
+<p><a href="https://import-linter.readthedocs.io/">import-linter</a> suit le
+graphe d'imports réel, y compris transitif &mdash; là où un <code>grep</code> ne
+verrait rien. Deux contrats sont déclarés dans <code>pyproject.toml</code> :
+l'empilement des couches, et l'interdiction faite au domaine d'atteindre
+<code>fastapi</code>, <code>sqlalchemy</code>, <code>pydantic</code> ou
+<code>starlette</code>. Ils tournent en pre-commit et en intégration continue.</p>
+
+<div class="note">
+  <strong>C'est le seul argument qui compte vraiment</strong>
+  Une règle d'architecture qui n'est pas vérifiée automatiquement se dégrade en
+  quelques mois. Tout le reste de ce dépôt &mdash; ports, mappers, DTO,
+  composition root &mdash; n'est que la machinerie qui rend cette règle tenable.
+</div>
+
+<h2 id="forme">La forme que ça donne<a class="anchor" href="#forme" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 960 320" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Trois adaptateurs entrants — API HTTP, CLI et worker RabbitMQ — appellent la couche application, qui entoure le domaine en Python pur. À droite, PostgreSQL, Valkey, SMTP et RabbitMQ implémentent les ports déclarés vers l'intérieur.">
+  <defs>
+    <marker id="fleche" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="var(--muted)" font-size="11.5" letter-spacing="0.06em" text-anchor="middle">
+      <text x="97" y="24">DRIVING &#183; PILOTENT</text>
+      <text x="820" y="24">DRIVEN &#183; PILOTÉS</text>
+    </g>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="48" width="178" height="56" rx="7"/>
+      <rect x="8" y="124" width="178" height="56" rx="7"/>
+      <rect x="8" y="200" width="178" height="56" rx="7"/>
+      <rect x="730" y="40" width="180" height="48" rx="7"/>
+      <rect x="730" y="100" width="180" height="48" rx="7"/>
+      <rect x="730" y="160" width="180" height="48" rx="7"/>
+      <rect x="730" y="220" width="180" height="48" rx="7"/>
+    </g>
+
+    <rect x="258" y="40" width="384" height="232" rx="10"
+          fill="var(--surface)" stroke="var(--line)"/>
+    <rect x="290" y="104" width="320" height="148" rx="8"
+          fill="var(--raised)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="14" font-weight="600" text-anchor="middle">
+      <text x="97" y="72">API HTTP</text>
+      <text x="97" y="148">CLI</text>
+      <text x="97" y="224">Worker</text>
+      <text x="450" y="70">Application</text>
+      <text x="450" y="142">Domaine</text>
+      <text x="820" y="63">PostgreSQL</text>
+      <text x="820" y="123">Valkey</text>
+      <text x="820" y="183">SMTP</text>
+      <text x="820" y="243">RabbitMQ</text>
+    </g>
+
+    <g fill="var(--muted)" font-size="11.5" text-anchor="middle">
+      <text x="97" y="90">FastAPI</text>
+      <text x="97" y="166">click</text>
+      <text x="97" y="242">consumer RabbitMQ</text>
+      <text x="450" y="90">use cases &#183; DTO &#183; ports techniques</text>
+      <text x="450" y="166">entités &#183; value objects &#183; ports métier</text>
+      <text x="450" y="186">exceptions métier</text>
+      <text x="820" y="79">SQLAlchemy</text>
+      <text x="820" y="139">cache</text>
+      <text x="820" y="199">aiosmtplib</text>
+      <text x="820" y="259">aio-pika</text>
+    </g>
+
+    <text x="450" y="222" fill="var(--accent)" font-size="12.5" font-weight="600" text-anchor="middle">Python pur &#183; aucun framework</text>
+
+    <g stroke="var(--muted)" stroke-width="1.5" marker-end="url(#fleche)">
+      <line x1="190" y1="76" x2="252" y2="76"/>
+      <line x1="190" y1="152" x2="252" y2="152"/>
+      <line x1="190" y1="228" x2="252" y2="228"/>
+    </g>
+    <g stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#fleche)">
+      <line x1="726" y1="64" x2="650" y2="64"/>
+      <line x1="726" y1="124" x2="650" y2="124"/>
+      <line x1="726" y1="184" x2="650" y2="184"/>
+      <line x1="726" y1="244" x2="650" y2="244"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="11.5" text-anchor="middle">
+      <text x="97" y="288">appellent les use cases</text>
+      <text x="820" y="292">implémentent les ports</text>
+    </g>
+  </g>
+</svg>
+<figcaption>Les flèches sont les <code>import</code>. À l'exécution, l'application
+appelle la base ; à la compilation, c'est la base qui dépend d'une interface
+définie plus au centre.</figcaption>
+</figure>
+
+<h2 id="contenu">Ce qu'on y trouve<a class="anchor" href="#contenu" aria-label="Lien vers cette section">#</a></h2>
+<ul class="cards">
+  <li><a href="./cours/01-regle-de-dependance.html"><strong>Une règle, vérifiée</strong>
+      <p>Deux contrats import-linter sur le graphe d'imports réel, en pre-commit et en CI. Pas un schéma dans un README.</p></a></li>
+  <li><a href="./cours/03-le-domaine.html"><strong>Un domaine qui n'importe rien</strong>
+      <p>Value objects auto-validés, invariants dans les entités, identités UUIDv7 générées par le domaine. Zéro I/O.</p></a></li>
+  <li><a href="./cours/07-adaptateurs.html"><strong>Trois adaptateurs entrants</strong>
+      <p>API HTTP, CLI et worker RabbitMQ appellent les <em>mêmes</em> use cases. C'est la preuve opérationnelle de l'isolation.</p></a></li>
+  <li><a href="./cours/08-transactions-et-erreurs.html"><strong>Erreurs métier ≠ pannes</strong>
+      <p>Une hiérarchie sémantique mappée en 404/409/422, une autre pour les dépendances indisponibles en 503.</p></a></li>
+  <li><a href="./cours/12-organisation-et-tests.html"><strong>Trois niveaux de tests</strong>
+      <p>Domaine pur, use cases sur ports doublés, intégration sur un PostgreSQL et un Valkey jetables. Pas de SQLite de complaisance.</p></a></li>
+  <li><a href="./infra/index.html"><strong>De Compose à Kind</strong>
+      <p>CloudNativePG, opérateur RabbitMQ, NetworkPolicy testées, HPA, securityContext durci. La même rigueur jusqu'à l'infra.</p></a></li>
+</ul>
+
+<h2 id="infra">Jusqu'au cluster<a class="anchor" href="#infra" aria-label="Lien vers cette section">#</a></h2>
+
+<p>La plupart des dépôts d'architecture s'arrêtent au <code>docker compose up</code>.
+Celui-ci va jusqu'à un cluster Kubernetes, parce que c'est là que les décisions
+prises dans le code se paient &mdash; ou se vérifient.</p>
+
+<p>L'exemple le plus net : le pooler tourne en <strong>mode transaction</strong>,
+ce qui interdit les <em>prepared statements</em> persistants, le
+<code>LISTEN/NOTIFY</code> et les <code>SET</code> de session. Cette contrainte
+d'infra remonte jusque dans le moteur SQLAlchemy de l'application
+(<code>prepared_statement_cache_size=0</code>, un nom d'énoncé unique par client,
+<code>pool_pre_ping</code>) &mdash; et elle impose que les migrations Alembic,
+elles, attaquent <strong>PostgreSQL en direct</strong> via un Job dédié, jamais le
+pooler. Un dépôt qui s'arrête à Compose ne peut pas montrer ça.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 940 430" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="ingress-nginx atteint le frontend sur le port 8080. Le frontend et Prometheus atteignent l'API sur 8000. L'API et le worker partagent les mêmes quatre cibles : le pooler sur 5432, RabbitMQ sur 5672, Valkey sur 6379 et Mailpit sur 1025. Le pooler atteint PostgreSQL, et le Job de migration l'atteint en direct. Le frontend, lui, ne peut pas joindre PostgreSQL : aucune politique ne l'autorise.">
+  <defs>
+    <marker id="fn4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="150" width="120" height="50" rx="7"/>
+      <rect x="178" y="150" width="120" height="50" rx="7"/>
+      <rect x="348" y="30" width="120" height="44" rx="7"/>
+      <rect x="348" y="268" width="120" height="48" rx="7"/>
+      <rect x="178" y="344" width="120" height="44" rx="7"/>
+      <rect x="556" y="94" width="134" height="44" rx="7"/>
+      <rect x="556" y="152" width="134" height="44" rx="7"/>
+      <rect x="556" y="210" width="134" height="44" rx="7"/>
+      <rect x="556" y="268" width="134" height="44" rx="7"/>
+      <rect x="760" y="94" width="140" height="44" rx="7"/>
+    </g>
+    <rect x="348" y="150" width="120" height="50" rx="7" fill="var(--raised)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="68" y="172">ingress-nginx</text>
+      <text x="238" y="172">frontend</text>
+      <text x="408" y="52">prometheus</text>
+      <text x="408" y="172">api</text>
+      <text x="408" y="290">mail-worker</text>
+      <text x="238" y="366">db-migrate</text>
+      <text x="623" y="114">pooler</text>
+      <text x="623" y="172">rabbitmq</text>
+      <text x="623" y="230">valkey</text>
+      <text x="623" y="288">mailpit</text>
+      <text x="830" y="114">postgres</text>
+    </g>
+    <g fill="var(--muted)" font-size="9.5" text-anchor="middle">
+      <text x="68" y="188">namespace</text>
+      <text x="238" y="188">nginx-unprivileged &#215;2</text>
+      <text x="408" y="188">&#215;2 → 6</text>
+      <text x="408" y="305">&#215;2</text>
+      <text x="238" y="380">Job</text>
+      <text x="623" y="128">PgBouncer &#215;2</text>
+      <text x="623" y="186">&#215;3</text>
+      <text x="623" y="244">cache</text>
+      <text x="623" y="302">SMTP de test</text>
+      <text x="830" y="128">CNPG &#215;3</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#fn4)">
+      <line x1="130" y1="175" x2="174" y2="175"/>
+      <line x1="300" y1="175" x2="344" y2="175"/>
+      <line x1="408" y1="76" x2="408" y2="146"/>
+      <line x1="512" y1="116" x2="552" y2="116"/>
+      <line x1="512" y1="174" x2="552" y2="174"/>
+      <line x1="512" y1="232" x2="552" y2="232"/>
+      <line x1="512" y1="290" x2="552" y2="290"/>
+      <line x1="692" y1="116" x2="756" y2="116"/>
+      <path d="M 300 366 L 830 366 L 830 142"/>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none">
+      <line x1="470" y1="175" x2="512" y2="175"/>
+      <line x1="470" y1="292" x2="512" y2="292"/>
+      <line x1="512" y1="116" x2="512" y2="292"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="9.5" text-anchor="middle">
+      <text x="152" y="168">8080</text>
+      <text x="322" y="168">8000</text>
+      <text x="532" y="109">5432</text>
+      <text x="532" y="167">5672</text>
+      <text x="532" y="225">6379</text>
+      <text x="532" y="283">1025</text>
+      <text x="724" y="109">5432</text>
+    </g>
+    <text x="422" y="112" fill="var(--muted)" font-size="9.5">8000</text>
+    <text x="565" y="358" fill="var(--muted)" font-size="10" text-anchor="middle">migrations : PostgreSQL en direct (DDL)</text>
+
+    <path d="M 238 202 L 238 246" fill="none" stroke="var(--danger)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <circle cx="238" cy="258" r="11" fill="var(--surface)" stroke="var(--danger)" stroke-width="1.5"/>
+    <text x="238" y="263" fill="var(--danger)" font-size="12" font-weight="700" text-anchor="middle">&#215;</text>
+    <text x="256" y="255" fill="var(--danger)" font-size="10.5" font-weight="600">frontend → postgres</text>
+    <text x="256" y="269" fill="var(--danger)" font-size="10">aucune politique ne l'autorise : refusé</text>
+
+    <text x="470" y="418" fill="var(--muted)" font-size="10.5" text-anchor="middle">Une politique d'ingress par cible ; tout ce qui n'est pas listé est refusé.</text>
+  </g>
+</svg>
+</figure>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Brique</th><th>Ce qui tourne</th><th>Pourquoi c'est là</th></tr></thead>
+  <tbody>
+    <tr><td>Cluster</td><td>Kind, 1 control-plane + 3 workers</td><td>Reproduire l'anti-affinité et la perte d'un nœud sur un portable</td></tr>
+    <tr><td>PostgreSQL</td><td>CloudNativePG, 3 instances + pooler ×2 en mode transaction</td><td>Bascule primaire gérée par l'opérateur, pas par un script</td></tr>
+    <tr><td>Broker</td><td>RabbitMQ, 3 nœuds via l'opérateur officiel</td><td>Le worker d'e-mails consomme une vraie file, avec DLQ</td></tr>
+    <tr><td>Montée en charge</td><td>HPA api 2→6, frontend 2→4 · PDB <code>minAvailable: 1</code></td><td>Un drain de nœud ne coupe pas le service</td></tr>
+    <tr><td>Durcissement</td><td><code>runAsNonRoot</code>, <code>readOnlyRootFilesystem</code>, capabilities <code>drop ALL</code>, seccomp</td><td>Sur les pods qu'on maîtrise ; les images tierces restent en défaut, et c'est écrit</td></tr>
+    <tr><td>Migrations</td><td>Job Alembic contre PostgreSQL en direct, avant l'API</td><td>Le mode transaction du pooler l'interdirait</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le tout se monte par un script (<code>./k8s/deploy.sh</code>) et se démonte par
+un autre. <strong><a href="./infra/index.html">La section infrastructure</a></strong>
+détaille chaque brique : les données, les workloads, la résilience, le réseau et
+l'exploitation.</p>
+
+<h2 id="limites">Ce que ce n'est pas<a class="anchor" href="#limites" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Ce que tu cherches</th><th>Ici</th><th>Où regarder sinon</th></tr></thead>
+  <tbody>
+    <tr><td>Comprendre comment on isole un domaine, avec la preuve</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
+    <tr><td>Un exemple complet de use case à la NetworkPolicy</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
+    <tr><td>Un support de cours ou un kata d'équipe</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
+    <tr><td>Un starter « clone and ship to prod »</td><td><span class="pill pill-danger">Non</span></td><td><a href="https://github.com/fastapi/full-stack-fastapi-template">full-stack-fastapi-template</a></td></tr>
+    <tr><td>Un framework, une bibliothèque, un paquet PyPI</td><td><span class="pill pill-danger">Non</span></td><td>Ce dépôt se lit et se copie, il ne s'installe pas</td></tr>
+    <tr><td><em>La</em> bonne architecture, valable partout</td><td><span class="pill pill-danger">Non</span></td><td><a href="./cours/13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">Quand <em>ne pas</em> l'utiliser</a></td></tr>
+    <tr><td>Un domaine métier riche à étudier</td><td><span class="pill pill-danger">Non</span></td><td>Le métier est un prétexte assumé &mdash; c'est <a href="./cours/ddd-strategique.html#diagnostic">discuté ici</a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Cette liste de « non » est le point important. Un dépôt qui prétend tout
+couvrir n'apprend rien à personne, et le chapitre sur les cas où cette
+architecture est du sur-dimensionnement est écrit avant tous les autres.</p>
+
+<h2 id="demarrage">Démarrage<a class="anchor" href="#demarrage" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Python 3.14, <a href="https://docs.astral.sh/uv/">uv</a> et un démon Docker.
+La base et le cache tournent en conteneurs ; l'API tourne en local.</p>
+
+<div class="snippet" data-lang="bash"><pre><code>git clone https://github.com/EdwinAlkins/fastapi-hexagonal.git
+cd fastapi-hexagonal
+cp .env.template .env
+
+docker compose up -d postgres pgbouncer valkey
+
+cd backend
+uv sync
+uv run alembic upgrade head
+make run                      # &rarr; http://localhost:8000/docs</code></pre></div>
+
+<p>Pour lancer la stack entière (API, worker, frontend, RabbitMQ, Mailpit,
+Prometheus) : <code>docker compose up --build</code> depuis la racine.</p>
+
+<p>Et pour vérifier que tout tient &mdash; lint, contrats d'architecture, typage
+strict et les trois niveaux de tests :</p>
+
+<div class="snippet" data-lang="bash"><pre><code>cd backend &amp;&amp; make check</code></pre></div>
+
+<h2 id="cours">Le cours<a class="anchor" href="#cours" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Quinze chapitres progressifs, chacun ancré dans le code de ce dépôt. Il n'enseigne pas une arborescence de dossiers : il enseigne deux
+questions &mdash; <em>à qui appartient cette décision&nbsp;?</em> et
+<em>qu'est-ce qui doit être cohérent dans la même transaction&nbsp;?</em></p>
+
+<ul class="toc">
+  <li><a href="./cours/00-le-probleme.html"><span class="num">00</span><span class="title">Le problème</span><span class="hook">Pourquoi cette architecture existe, avant/après</span></a></li>
+  <li><a href="./cours/01-regle-de-dependance.html"><span class="num">01</span><span class="title">La règle de dépendance</span><span class="hook">La seule règle qui compte, et comment la vérifier</span></a></li>
+  <li><a href="./cours/02-ou-vit-une-regle.html"><span class="num">02</span><span class="title">Où vit une règle&nbsp;?</span><span class="hook">L'arbre de décision central du cours</span></a></li>
+  <li><a href="./cours/03-le-domaine.html"><span class="num">03</span><span class="title">Le domaine</span><span class="hook">DDD stratégique et tactique, value objects, entités, invariants</span></a></li>
+  <li><a href="./cours/04-les-agregats.html"><span class="num">04</span><span class="title">Les agrégats</span><span class="hook">Frontière de cohérence, racine, comment la choisir</span></a></li>
+  <li><a href="./cours/05-relations-entre-agregats.html"><span class="num">05</span><span class="title">Relations entre agrégats</span><span class="hook">Référence par identité, cardinalités, N+1</span></a></li>
+  <li><a href="./cours/06-application-et-ports.html"><span class="num">06</span><span class="title">Application &amp; ports</span><span class="hook">Use cases, DTO, où placer un port</span></a></li>
+  <li><a href="./cours/07-adaptateurs.html"><span class="num">07</span><span class="title">Les adaptateurs</span><span class="hook">ORM, mappers, HTTP, CLI, worker</span></a></li>
+  <li><a href="./cours/08-transactions-et-erreurs.html"><span class="num">08</span><span class="title">Transactions &amp; erreurs</span><span class="hook">Frontière transactionnelle, erreurs métier vs techniques, DI</span></a></li>
+  <li><a href="./cours/09-lectures-et-query-services.html"><span class="num">09</span><span class="title">Lire sans passer par le domaine</span><span class="hook">Query services, N+1, CQRS léger</span></a></li>
+  <li><a href="./cours/10-ecritures-en-masse.html"><span class="num">10</span><span class="title">Écrire en masse</span><span class="hook">Reconstitution, bulk writers, idempotence, <code>UnitOfWork</code></span></a></li>
+  <li><a href="./cours/11-cache-et-evenements.html"><span class="num">11</span><span class="title">Cache &amp; événements</span><span class="hook">Cache-aside, événements de domaine vs d'intégration</span></a></li>
+  <li><a href="./cours/12-organisation-et-tests.html"><span class="num">12</span><span class="title">Organisation &amp; tests</span><span class="hook">Tranches verticales, les trois niveaux de tests</span></a></li>
+  <li><a href="./cours/13-demarrer-un-projet.html"><span class="num">13</span><span class="title">Démarrer un projet</span><span class="hook">La recette, la checklist, et quand <em>ne pas</em> l'appliquer</span></a></li>
+  <li><a href="./cours/14-annexes.html"><span class="num">14</span><span class="title">Annexes</span><span class="hook">Principe vs notre choix, glossaire, corrigés</span></a></li>
+</ul>
+
+<p>En complément, un <a href="./cours/ddd-strategique.html">carnet de terrain sur
+le DDD stratégique</a> : la procédure d'atelier qu'un dépôt de code ne peut pas
+enseigner, et un diagnostic honnête des frontières de ce projet.</p>
+
+<div class="closing">
+  <p><strong>Licence MIT. Rien à installer, tout à lire.</strong></p>
+  <div class="cta">
+    <a class="primary" href="./cours/index.html">Commencer le cours</a>
+    <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">GitHub</a>
+  </div>
+</div>
+
+</main>
+
+<footer class="site">
+  FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

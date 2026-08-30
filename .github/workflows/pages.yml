@@ -1,0 +1,45 @@
+name: Docs
+
+# Le site est du HTML statique dans docs/ : rien à construire, le dossier est
+# publié tel quel.
+#
+# Ce workflow suppose « Settings → Pages → Source: GitHub Actions ». Avec
+# « Deploy from a branch » (main, dossier /docs), ce fichier devient inutile et
+# peut être supprimé.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un déploiement à la fois, sans interrompre celui en cours : une page publiée à
+# moitié n'aide personne.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publier docs/
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v5

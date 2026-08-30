@@ -75,10 +75,10 @@ Chaque couche est **tranchée par bounded context** (`domain/task/`,
 make imports        # ou : uv run lint-imports
 ```
 
-→ Approfondir : [architecture](docs/cours/01-architecture-hexagonale.md) ·
-[le domaine](docs/cours/02-le-domaine.md) ·
-[relations entre agrégats](docs/cours/05-relations-entre-agregats.md) ·
-[décisions transverses](docs/cours/06-decisions-transverses.md) (erreurs, transactions, DI).
+→ Approfondir : [règle de dépendance](docs/cours/01-regle-de-dependance.md) ·
+[où vit une règle ?](docs/cours/02-ou-vit-une-regle.md) · [le domaine](docs/cours/03-le-domaine.md) ·
+[agrégats](docs/cours/04-les-agregats.md) · [relations](docs/cours/05-relations-entre-agregats.md) ·
+[transactions & erreurs](docs/cours/08-transactions-et-erreurs.md) (erreurs, transactions, DI).
 
 ## Commandes
 
@@ -111,8 +111,8 @@ Tout passe par `make` (versions des outils épinglées dans `pyproject.toml`) �
 
 `RenameUser` est un exemple minimal complet (mutation + invalidation de cache).
 Pour un **nouveau bounded context** entier, le contexte `user` sert de référence.
-→ Recette détaillée : [démarrer un projet](docs/cours/08-demarrer-un-projet.md) ·
-[application & use cases](docs/cours/03-application-use-cases.md).
+→ Recette détaillée : [démarrer un projet](docs/cours/11-demarrer-un-projet.md) ·
+[application & ports](docs/cours/06-application-et-ports.md).
 
 ## API
 
@@ -131,6 +131,8 @@ Pour un **nouveau bounded context** entier, le contexte `user` sert de référen
 | POST    | `/api/v1/tasks/{id}/complete`  | Terminer une tâche                |
 | POST    | `/api/v1/tasks/{id}/share`     | Partager (→ notifications worker) |
 | DELETE  | `/api/v1/tasks/{id}`           | Supprimer une tâche               |
+| GET     | `/api/v1/exports/tasks`        | Export NDJSON tâches + propriétaire |
+| GET     | `/api/v1/exports/tasks/count`  | Nombre de lignes de l'export      |
 | GET     | `/health` · `/ready`           | Liveness · readiness (DB + cache) |
 
 Une tâche appartient toujours à un utilisateur (**1→n**) : elle se crée sous la
@@ -145,6 +147,69 @@ curl -X POST localhost:8000/api/v1/users/$USER/tasks \
   -H 'content-type: application/json' \
   -d '{"title": "Rédiger le rapport"}'
 ```
+
+### Le chemin de lecture
+
+Les deux routes `/exports/…` **ne passent pas par les agrégats**. Elles utilisent
+un *query service* — `TaskQueryPort` (`application/task/queries.py`), implémenté
+par `SqlAlchemyTaskQueryService` — qui fait un `SELECT … JOIN users` unique et
+renvoie un **DTO plat**, diffusé en NDJSON avec une mémoire constante
+(`yield_per`). Pas de use case : le router appelle le port directement.
+
+Mesuré sur 200 tâches et 10 propriétaires, contre PostgreSQL, en comptant les
+requêtes émises : **201 requêtes / 84,6 ms** par les agrégats contre **1 requête /
+6,6 ms** par le query service. Les deux chemins sont verrouillés par des tests
+(`tests/integration/api/test_exports_api.py`).
+
+→ Pourquoi et quand : [lire sans passer par le domaine](docs/cours/09-lectures-et-query-services.md).
+
+```bash
+curl -N localhost:8000/api/v1/exports/tasks     # une ligne JSON par tâche
+```
+
+### Le chemin d'écriture en masse
+
+L'import rejoue ce même fichier dans une autre base. C'est une **écriture**, donc
+il repasse par le domaine — mais pas par `CreateTask`, qui imposerait un
+identifiant neuf, le statut `todo` et l'instant présent, et réécrirait donc
+silencieusement ce qu'on cherche à conserver. La porte est `Task.reconstitute` :
+les value objects valident toujours, seules les règles de *transition* ne sont
+pas rejouées.
+
+```bash
+uv run task-manager-cli import-tasks tasks-export.ndjson   # flux de l'API
+uv run task-manager-cli import-tasks taches-2026-08-29.json  # fichier du bouton « Exporter »
+```
+
+Les deux formats sont acceptés parce que le dépôt en produit deux : l'API sert du
+**NDJSON** (un objet par ligne, diffusé), le bouton du frontend enregistre un
+**tableau JSON** lisible. Seul le premier se lit à mémoire constante.
+
+Commande CLI et non route HTTP, délibérément : la transaction entoure **le use
+case**, pas la requête.
+
+Le domaine n'est pas le coût — les allers-retours le sont. Mesuré sur 2 000
+tâches réparties entre 50 propriétaires, contre PostgreSQL :
+
+| Chemin | Requêtes SQL |
+|---|---|
+| Unitaire (`CreateTask` ligne à ligne) | **6 000** (2 000 `INSERT` + 4 000 `SELECT`) |
+| Import groupé (lots de 1 000) | **5** (4 `INSERT` + 1 `SELECT`) |
+
+L'import est **idempotent** (`ON CONFLICT DO NOTHING` sur des identités venues du
+fichier) et committé **lot par lot** : il n'est donc pas atomique, et c'est le
+comportement voulu — une transaction unique de dix minutes épinglerait une
+connexion serveur derrière PgBouncer et perdrait tout sur un échec tardif. On
+échange l'atomicité globale contre la reprise, que l'idempotence rend sûre.
+
+Une réserve, parce qu'elle vaut plus que le code lui-même : pour *ce* scénario —
+même schéma, même version, d'un déploiement à l'autre — `pg_dump` suffirait. Cet
+import est un **support pédagogique**, une raison d'écrire beaucoup pour montrer ce
+que ça coûte ([chapitre 10](docs/cours/10-ecritures-en-masse.md#restaurer-nest-pas-importer)).
+
+Il rend un **rapport** plutôt qu'un tout-ou-rien : lignes lues, insérées, déjà
+présentes, et rejetées *avec leur raison* — c'est l'argument le moins évident en
+faveur du domaine ici, un `COPY` brut ne sachant dire que « erreur ligne 47 231 ».
 
 ## Déploiement
 

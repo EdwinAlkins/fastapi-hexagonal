@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le cours &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Quatorze chapitres progressifs sur l'architecture hexagonale et le DDD, ancrés dans le code réel d'un dépôt FastAPI : prérequis, plan, vocabulaire de base.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html" aria-current="page">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>Architecture hexagonale &amp; DDD en pratique</h1>
+  <p class="lede">Un cours progressif pour comprendre les concepts qui structurent
+  ce projet &mdash; et pouvoir les réutiliser ailleurs, dans un autre langage, un
+  autre framework, un autre métier.</p>
+</header>
+
+<p>Ce n'est pas un manuel théorique : chaque notion est illustrée par le
+<strong>code réel de ce dépôt</strong> &mdash; un gestionnaire de tâches avec deux
+tranches, <code>task</code> et <code>user</code>, liées par une relation 1→n, une
+API HTTP, un CLI et un worker RabbitMQ.</p>
+
+<h2 id="à-qui-sadresse-ce-cours">À qui s'adresse ce cours<a class="anchor" href="#à-qui-sadresse-ce-cours" aria-label="Lien vers cette section">#</a></h2>
+
+<p>À un développeur qui sait coder mais veut comprendre <strong>pourquoi</strong>
+organiser une application de cette manière, et <strong>comment</strong> raisonner
+pour la concevoir soi-même.</p>
+
+<p><strong>Prérequis</strong> : Python (classes, <code>async</code>/<code>await</code>,
+type hints), les bases d'un ORM et d'une API HTTP. Aucune connaissance préalable de
+DDD n'est nécessaire.</p>
+
+<h2 id="comment-lire-ce-cours">Comment lire ce cours<a class="anchor" href="#comment-lire-ce-cours" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Les chapitres sont progressifs &mdash; chacun s'appuie sur le précédent. Les
+chapitres 03 et 05 sont les plus denses.</p>
+
+<ul class="toc">
+  <li><a href="./00-le-probleme.html"><span class="num">00</span><span class="title">Le problème</span><span class="hook">Pourquoi cette architecture existe, avant/après</span></a></li>
+  <li><a href="./01-regle-de-dependance.html"><span class="num">01</span><span class="title">La règle de dépendance</span><span class="hook">La seule règle qui compte, et comment la vérifier</span></a></li>
+  <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span><span class="title">Où vit une règle&nbsp;?</span><span class="hook">L'arbre de décision central du cours</span></a></li>
+  <li><a href="./03-le-domaine.html"><span class="num">03</span><span class="title">Le domaine</span><span class="hook">DDD stratégique et tactique, value objects, entités, invariants</span></a></li>
+  <li><a href="./04-les-agregats.html"><span class="num">04</span><span class="title">Les agrégats</span><span class="hook">Frontière de cohérence, racine, comment la choisir</span></a></li>
+  <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span><span class="title">Relations entre agrégats</span><span class="hook">Référence par identité, cardinalités, N+1</span></a></li>
+  <li><a href="./06-application-et-ports.html"><span class="num">06</span><span class="title">Application &amp; ports</span><span class="hook">Use cases, DTO, où placer un port</span></a></li>
+  <li><a href="./07-adaptateurs.html"><span class="num">07</span><span class="title">Les adaptateurs</span><span class="hook">ORM, mappers, HTTP, CLI, worker</span></a></li>
+  <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span><span class="title">Transactions &amp; erreurs</span><span class="hook">Frontière transactionnelle, erreurs métier vs techniques, DI</span></a></li>
+  <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span><span class="title">Lire sans passer par le domaine</span><span class="hook">Query services, N+1, CQRS léger</span></a></li>
+  <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span><span class="title">Écrire en masse</span><span class="hook">Reconstitution, bulk writers, idempotence, <code>UnitOfWork</code></span></a></li>
+  <li><a href="./11-cache-et-evenements.html"><span class="num">11</span><span class="title">Cache &amp; événements</span><span class="hook">Cache-aside, événements de domaine vs d'intégration</span></a></li>
+  <li><a href="./12-organisation-et-tests.html"><span class="num">12</span><span class="title">Organisation &amp; tests</span><span class="hook">Tranches verticales, les trois niveaux de tests</span></a></li>
+  <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span><span class="title">Démarrer un projet</span><span class="hook">La recette, la checklist, et quand <em>ne pas</em> l'appliquer</span></a></li>
+  <li><a href="./14-annexes.html"><span class="num">14</span><span class="title">Annexes</span><span class="hook">Principe vs notre choix, glossaire, corrigés</span></a></li>
+</ul>
+
+<p>En complément, un <a href="./ddd-strategique.html">carnet de terrain sur le DDD
+stratégique</a> : la procédure d'atelier qu'un dépôt de code ne peut pas enseigner,
+et un diagnostic honnête des frontières de ce projet.</p>
+
+<h2 id="lidée-en-une-phrase">L'idée en une phrase<a class="anchor" href="#lidée-en-une-phrase" aria-label="Lien vers cette section">#</a></h2>
+
+<blockquote>
+  <p>Le <strong>cœur métier</strong> de l'application ne doit dépendre
+  d'<strong>aucun détail technique</strong> (base de données, framework web, format
+  JSON). Les détails se branchent <em>sur</em> le cœur, jamais l'inverse.</p>
+</blockquote>
+
+<p>Tout le reste en découle.</p>
+
+<h2 id="une-convention-importante--principe--notre-choix">Une convention importante : principe ≠ notre choix<a class="anchor" href="#une-convention-importante--principe--notre-choix" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Beaucoup de cours d'architecture présentent les choix de leur auteur comme des
+lois universelles. C'est le piège le plus courant, et il produit des développeurs
+dogmatiques. Ici, chaque fois qu'un choix d'implémentation est discutable, tu
+trouveras un encadré à trois colonnes :</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Value object</td><td>Pas d'identité, égalité par valeur</td><td><code>dataclass(frozen=True, slots=True)</code>, auto-validé</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>La colonne du milieu est transférable partout. La colonne de droite est
+<strong>un</strong> choix parmi d'autres, valide dans <strong>ce</strong> contexte.
+Savoir les distinguer, c'est la différence entre appliquer une recette et concevoir
+une architecture.</p>
+
+<p>Le tableau complet de ces distinctions est regroupé en
+<a href="./14-annexes.html#a-principe-vs-choix-de-ce-projet">annexe</a>.</p>
+
+<h2 id="vocabulaire-de-base">Vocabulaire de base (à garder sous la main)<a class="anchor" href="#vocabulaire-de-base" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Terme</th><th>Définition courte</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Domaine</strong></td><td>Le cœur métier : les règles, indépendantes de toute technique.</td></tr>
+    <tr><td><strong>Port</strong></td><td>Une interface exprimant un <em>besoin</em> du cœur.</td></tr>
+    <tr><td><strong>Adaptateur</strong></td><td>Une implémentation concrète d'un port.</td></tr>
+    <tr><td><strong>Driving / driven</strong></td><td>Adaptateur qui <em>pilote</em> l'app (API, CLI, worker) vs. qui est <em>piloté</em> par elle (BDD, cache, SMTP).</td></tr>
+    <tr><td><strong>Entité</strong></td><td>Objet métier avec une identité stable dans le temps (<code>Task</code>, <code>User</code>).</td></tr>
+    <tr><td><strong>Value object</strong></td><td>Objet défini par sa valeur, sans identité propre (<code>Email</code>, <code>TaskTitle</code>).</td></tr>
+    <tr><td><strong>Agrégat</strong></td><td>Une frontière de cohérence transactionnelle, avec une racine.</td></tr>
+    <tr><td><strong>Use case</strong></td><td>Une action applicative qui orchestre le domaine (<code>CreateTask</code>).</td></tr>
+    <tr><td><strong>Bounded context</strong></td><td>Une frontière à l'intérieur de laquelle un modèle et son langage restent cohérents.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le <a href="./14-annexes.html#b-glossaire">glossaire complet</a> est en annexe.</p>
+
+<h2 id="à-toi-de-jouer-introduction">À toi de jouer<a class="anchor" href="#à-toi-de-jouer-introduction" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Chaque chapitre se termine par deux ou trois exercices courts. Ils ne demandent
+pas d'écrire beaucoup de code &mdash; surtout de <strong>décider où placer quelque
+chose</strong>, qui est la compétence réelle que ce cours essaie de transmettre. Les
+corrigés sont en <a href="./14-annexes.html#c-corrigés-des-exercices">annexe</a>.</p>
+
+<nav class="pager">
+  <a href="../index.html">&larr; Accueil</a>
+  <a href="./00-le-probleme.html">00. Le problème &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

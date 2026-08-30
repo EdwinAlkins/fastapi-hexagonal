@@ -22,7 +22,14 @@ class LogLevel(StrEnum):
 class Settings(BaseSettings):
     """Paramètres applicatifs (surchargables par variables d'environnement)."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="APP_", extra="ignore")
+    # ``env_file`` est résolu depuis le **répertoire courant**, pas depuis ce
+    # module. Le ``.env`` du projet vivant à la racine du dépôt (il alimente aussi
+    # docker-compose), une commande lancée depuis ``backend/`` ne le trouverait
+    # pas : on cherche donc aux deux endroits. Les fichiers absents sont ignorés,
+    # et le dernier l'emporte — un ``backend/.env`` local reste prioritaire.
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"), env_prefix="APP_", extra="ignore"
+    )
 
     app_name: str = "Task Manager"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]

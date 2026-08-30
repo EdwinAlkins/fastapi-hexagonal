@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDD stratégique &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Ce qu'un dépôt de code ne peut pas enseigner : la procédure d'atelier pour découper des bounded contexts, les tests de validation d'une frontière, et un diagnostic honnête de ce projet.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html" aria-current="page">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>DDD stratégique &mdash; carnet de terrain</h1>
+  <p class="lede">Ce qui se décide <em>avant</em> de coder, avec des gens qui ne
+  sont pas développeurs. Écrit pour être fait, pas seulement lu.</p>
+</header>
+
+<div class="tldr">
+  <strong>Ce document n'est pas un chapitre du cours.</strong> Le cours enseigne le
+  DDD <em>tactique</em> : ce qui se code. Ce carnet traite du DDD
+  <em>stratégique</em> : les frontières. Il se termine par un diagnostic sans
+  complaisance de ce dépôt.
+</div>
+
+<h2 id="pourquoi-ce-document-existe-séparément">Pourquoi ce document existe séparément<a class="anchor" href="#pourquoi-ce-document-existe-séparément" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Un cours adossé à un dépôt ne peut pas enseigner le stratégique, pour une raison
+structurelle : <strong>le stratégique ne produit pas de code.</strong></p>
+
+<p>Il produit des décisions de frontières. Or une frontière ne se lit pas dans un
+fichier &mdash; elle se lit dans ce que <em>plusieurs personnes</em> entendent quand
+elles disent le même mot. Un dépôt montre le résultat d'un découpage ; il ne peut
+montrer ni le raisonnement qui l'a produit, ni les trois découpages écartés.</p>
+
+<p>D'où le déséquilibre assumé : le cours consacre treize chapitres au tactique et
+une section au stratégique. Ce carnet corrige le tir dans le seul format qui a du
+sens &mdash; une <strong>procédure à exécuter</strong>, pas une explication à
+comprendre.</p>
+
+<div class="note">
+  <strong>Le vrai enjeu, en une phrase</strong>
+  Se tromper de pattern coûte une refonte de classe. Se tromper de frontière coûte
+  une refonte de système. Un modèle tactique impeccable posé sur de mauvaises
+  frontières produit un système propre localement et incohérent globalement
+  &mdash; le pire cas, parce qu'il a l'air bon.
+</div>
+
+<h2 id="ce-que-le-stratégique-décide-réellement">Ce que le stratégique décide réellement<a class="anchor" href="#ce-que-le-stratégique-décide-réellement" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Trois décisions, et rien d'autre :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Décision</th><th>Question à laquelle elle répond</th><th>Livrable</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Langage ubiquitaire</strong></td><td>Quel mot pour quelle chose, et qui l'emploie ?</td><td>Un glossaire par contexte</td></tr>
+    <tr><td><strong>Bounded contexts</strong></td><td>Où passent les frontières de sens ?</td><td>Une liste de contextes nommés</td></tr>
+    <tr><td><strong>Context map</strong></td><td>Comment les contextes se parlent, et qui subit qui ?</td><td>Un schéma de relations</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ce ne sont pas des artefacts de documentation. Ce sont des
+<strong>contrats</strong> : le glossaire dit ce que le code a le droit de nommer,
+les contextes disent ce qui a le droit de dépendre de quoi, la context map dit qui
+casse qui en cas de changement.</p>
+
+<h3 id="la-définition-qui-sert-vraiment">La définition qui sert vraiment<a class="anchor" href="#la-définition-qui-sert-vraiment" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un <strong>bounded context</strong> est une frontière à l'intérieur de laquelle
+un <strong>modèle et son langage sont cohérents</strong>, et dont les règles de
+signification sont maîtrisées.</p>
+
+<p>L'indice le plus facile à observer tient en une phrase : <strong>si deux
+personnes emploient le même mot pour deux choses différentes, examine une
+séparation.</strong> Pas « elles devraient s'accorder » &mdash; elles ont
+<em>raison</em> toutes les deux, dans leur contexte. Attention toutefois : c'est un
+signal fort, pas une preuve. La frontière se décide sur le modèle, pas sur un
+lexique.</p>
+
+<div class="warn">
+  <strong>Le réflexe à désapprendre</strong>
+  Chercher le modèle unique qui satisfait tout le monde. Il n'existe pas, et le
+  poursuivre produit toujours la même chose : une classe qui grossit, pleine de
+  champs optionnels qui n'ont de sens que pour la moitié des appelants, que plus
+  personne n'ose modifier. <strong>Le dédoublement d'un concept entre deux contextes
+  n'est pas de la duplication à éliminer.</strong>
+</div>
+
+<h2 id="les-symptômes-de-frontières-fausses">Les symptômes de frontières fausses<a class="anchor" href="#les-symptômes-de-frontières-fausses" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Avant de lancer un atelier, vérifie qu'il est nécessaire. Voici les symptômes
+observables &mdash; certains directement dans le dépôt.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Symptôme</th><th>Ce qu'il révèle</th><th>Comment le repérer</th></tr></thead>
+  <tbody>
+    <tr><td>Une classe centrale que tout le monde importe (<code>User</code>, <code>Order</code>, <code>Product</code>)</td><td>Plusieurs contextes fusionnés de force</td><td><code>grep -rc "import User"</code> &mdash; si c'est partout, c'est le signal</td></tr>
+    <tr><td>Des champs optionnels par groupes (« ces 6 champs ne servent qu'à la facturation »)</td><td>Deux concepts dans une classe</td><td>Lire les <code>| None</code> et voir s'ils se regroupent</td></tr>
+    <tr><td>Un même mot défini différemment selon l'interlocuteur</td><td>Frontière de sens non nommée</td><td>Écouter deux réunions métier</td></tr>
+    <tr><td>Des commits qui touchent systématiquement 5 modules</td><td>Frontière au mauvais endroit</td><td><code>git log --name-only</code> sur 3 mois</td></tr>
+    <tr><td>Un « service » ou un « manager » qui grossit sans fin</td><td>Le contexte manquant est là, sans nom</td><td>Chercher les classes &gt; 300 lignes</td></tr>
+    <tr><td>Des tables jointes en permanence dans les requêtes</td><td>Cohésion réelle non reflétée</td><td>Lire les <code>JOIN</code> récurrents</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Aucun de ces symptômes ? Il n'y a probablement pas de problème stratégique
+&mdash; et ce document peut être rangé. C'est le cas de ce dépôt aujourd'hui, pour
+une raison développée <a href="#diagnostic">plus bas</a>.</p>
+
+<h2 id="la-procédure">La procédure<a class="anchor" href="#la-procédure" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Compter une journée pour un système de taille moyenne, ou deux demi-journées
+espacées d'une semaine &mdash; mieux : le cerveau travaille entre les deux.</p>
+
+<h3 id="étape-0--réunir-les-bonnes-personnes">Étape 0 — Réunir les bonnes personnes<a class="anchor" href="#étape-0--réunir-les-bonnes-personnes" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est l'étape qu'on rate le plus souvent, et elle décide de tout le reste.</p>
+
+<p><strong>Qui doit être là :</strong></p>
+<ul>
+  <li><strong>1 à 3 experts métier</strong> &mdash; les gens qui <em>font</em> le
+      travail, pas ceux qui le managent. Le commercial qui saisit les commandes vaut
+      mieux que le directeur commercial.</li>
+  <li><strong>2 à 5 développeurs</strong> &mdash; dont ceux qui maintiendront le
+      code.</li>
+  <li><strong>1 facilitateur</strong> &mdash; qui ne prend pas parti sur le modèle,
+      et dont le seul rôle est de faire parler les experts et d'empêcher les
+      développeurs de parler technique.</li>
+</ul>
+
+<p><strong>Qui ne doit pas être là :</strong> personne qui a un intérêt à défendre
+une architecture existante &mdash; y compris l'auteur du code actuel, d'où le
+facilitateur externe.</p>
+
+<p><strong>Le matériel :</strong> un mur, des post-its de 4 couleurs, des marqueurs.
+Pas d'écran, pas de Miro tant que le mur physique est possible. La contrainte
+physique force la synthèse ; l'infini du canvas numérique la dissout.</p>
+
+<p><strong>La règle d'or</strong> : les développeurs écoutent et écrivent, ils ne
+proposent pas de modèle. Dès qu'on entend « on pourrait faire une table… », le
+facilitateur coupe.</p>
+
+<h3 id="étape-1--eventstorming-big-picture">Étape 1 — EventStorming <em>big picture</em> (2 à 3 h)<a class="anchor" href="#étape-1--eventstorming-big-picture" aria-label="Lien vers cette section">#</a></h3>
+
+<ol>
+  <li><strong>Les événements</strong> (post-its orange). Chaque participant écrit
+      tout ce qui <em>arrive</em> dans le système, <strong>au passé</strong> :
+      « Commande passée », « Paiement accepté », « Colis expédié », « Tâche
+      terminée ». Pas de discussion pendant 20 minutes : on écrit en silence et on
+      colle.</li>
+  <li><strong>La ligne de temps.</strong> On ordonne les post-its de gauche à droite.
+      Les doublons apparaissent, les trous aussi. C'est bruyant, et c'est normal.</li>
+  <li><strong>Les points chauds</strong> (post-its rouges). À chaque désaccord ou
+      question sans réponse : un post-it rouge, et <strong>on avance</strong>. Ne
+      jamais résoudre un désaccord sur le moment &mdash; le noter est plus précieux
+      que le trancher.</li>
+  <li><strong>Les acteurs et les systèmes externes.</strong> Qui déclenche quoi, qui
+      reçoit quoi.</li>
+</ol>
+
+<p><strong>Livrable</strong> : un mur d'événements ordonnés, photographié. Et la
+liste des points rouges &mdash; qui vaut souvent plus que le reste.</p>
+
+<h3 id="étape-2--repérer-les-ruptures">Étape 2 — Repérer les ruptures<a class="anchor" href="#étape-2--repérer-les-ruptures" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est ici que les frontières apparaissent. Trois choses à chercher sur le mur :</p>
+
+<ul>
+  <li><strong>Les ruptures de vocabulaire.</strong> Le moment où « client » cesse de
+      vouloir dire <em>prospect à convaincre</em> pour vouloir dire <em>adresse de
+      livraison</em>.</li>
+  <li><strong>Les pivots temporels.</strong> Les endroits où le processus attend :
+      validation humaine, paiement externe, livraison. Une attente est presque
+      toujours une frontière &mdash; parce que la cohérence immédiate y est déjà
+      impossible.</li>
+  <li><strong>Les changements d'acteur.</strong> Quand la personne qui agit change,
+      le vocabulaire change presque toujours avec.</li>
+</ul>
+
+<p><strong>L'exercice décisif</strong> : prendre chaque nom important et demander à
+voix haute <em>« est-ce que ça veut dire la même chose ici et là ? »</em>. Noter
+chaque « ah non, pas tout à fait ». <strong>Chaque « pas tout à fait » est une
+frontière à examiner.</strong></p>
+
+<h3 id="étape-3--nommer-les-contextes-candidats">Étape 3 — Nommer les contextes candidats<a class="anchor" href="#étape-3--nommer-les-contextes-candidats" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Entourer des zones du mur, leur donner un nom <strong>issu du métier</strong>
+(<code>Facturation</code>, <code>Expédition</code>, <code>Catalogue</code>) &mdash;
+jamais un nom technique (<code>Core</code>, <code>Common</code>,
+<code>Referentiel</code>).</p>
+
+<p>Puis, pour chacun, écrire le <strong>glossaire</strong> : 5 à 15 termes, leur
+définition dans <em>ce</em> contexte. C'est le livrable qui survit le mieux au temps ;
+c'est souvent le seul artefact encore lu deux ans après.</p>
+
+<p>Un contexte sans glossaire rédigé n'est pas un contexte, c'est un dossier.</p>
+
+<h3 id="étape-4--dessiner-la-context-map">Étape 4 — Dessiner la context map<a class="anchor" href="#étape-4--dessiner-la-context-map" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Relation</th><th>Ce que ça veut dire</th><th>Quand la choisir</th><th>Coût</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Shared kernel</strong></td><td>Un petit noyau commun, modifié d'un commun accord</td><td>Équipes très proches, noyau vraiment stable</td><td>Élevé à terme : tout changement se négocie</td></tr>
+    <tr><td><strong>Customer / supplier</strong></td><td>L'amont s'engage à servir l'aval ; l'aval peut négocier</td><td>Deux équipes, dépendance assumée</td><td>Moyen : demande une vraie relation</td></tr>
+    <tr><td><strong>Conformist</strong></td><td>L'aval adopte tel quel le modèle de l'amont</td><td>L'amont ne bougera jamais (SI historique, API tierce)</td><td>Faible à court terme, empoisonnant à long terme</td></tr>
+    <tr><td><strong>Anti-corruption layer</strong></td><td>L'aval traduit le modèle amont dans le sien</td><td>Le modèle amont est inadapté ou instable</td><td>Le plus coûteux à écrire, le moins coûteux à vivre</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ajouter une flèche par relation, et <strong>écrire le sens de la
+dépendance</strong> &mdash; c'est-à-dire qui casse qui quand ça change. C'est
+l'information la plus utile de tout le schéma.</p>
+
+<p>L'<strong>anti-corruption layer</strong> est celle à connaître par cœur. C'est
+exactement le principe que le cours applique partout à petite échelle : un mapper
+protège le domaine de l'ORM, un ACL protège un contexte du modèle d'un autre
+système. Chaque fois qu'on intègre quelque chose qu'on ne contrôle pas &mdash; un
+CRM, une API de paiement, le SI d'un client &mdash; la question n'est pas
+<em>si</em> on écrit un ACL, mais quand on regrettera de ne pas l'avoir fait.</p>
+
+<h3 id="étape-5--décider-quoi-implémenter">Étape 5 — Décider quoi implémenter, et dans quel ordre<a class="anchor" href="#étape-5--décider-quoi-implémenter" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Tous les contextes identifiés ne méritent pas d'exister dans le code
+<strong>aujourd'hui</strong>. Les classer :</p>
+
+<ul>
+  <li><strong>Le cœur</strong> (<em>core domain</em>) &mdash; ce qui fait la valeur,
+      ce que personne d'autre ne fait à ta place. C'est là que va l'effort tactique
+      du cours : agrégats, invariants, tests. Il y en a <strong>un</strong>, rarement
+      deux.</li>
+  <li><strong>Le support</strong> &mdash; nécessaire mais banal. Un CRUD honnête
+      suffit (<a href="./13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">ch. 13</a>).</li>
+  <li><strong>Le générique</strong> &mdash; auth, facturation, notifications.
+      <strong>Acheter, ne pas écrire.</strong></li>
+</ul>
+
+<p>L'erreur classique est d'appliquer le traitement complet du cours aux trois
+catégories. Le vrai geste stratégique, c'est de décider <strong>où ne pas
+investir</strong>.</p>
+
+<h2 id="les-tests-de-validation-dune-frontière">Les tests de validation d'une frontière<a class="anchor" href="#les-tests-de-validation-dune-frontière" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Avant d'acter un découpage, le passer à ces cinq tests. Chacun peut le
+disqualifier à lui seul.</p>
+
+<ol>
+  <li><strong>Le test du mot</strong> &mdash; un terme a-t-il exactement un sens dans
+      ce contexte ? S'il en a deux, la frontière est probablement mal placée. Signal
+      fort, pas preuve : c'est la cohérence du <em>modèle</em> qui tranche, pas le
+      lexique seul.</li>
+  <li><strong>Le test de la transaction</strong> &mdash; ce qui doit être cohérent
+      <em>immédiatement</em> est-il à l'intérieur ? Si une règle exige une cohérence
+      instantanée entre deux contextes, ils n'en font qu'un
+      (<a href="./04-les-agregats.html">ch. 04</a>).</li>
+  <li><strong>Le test de l'équipe</strong> &mdash; une équipe peut-elle posséder ce
+      contexte de bout en bout ? Corollaire de la loi de Conway : le découpage
+      finira par ressembler à l'organigramme, qu'on le veuille ou non. Autant le
+      choisir.</li>
+  <li><strong>Le test du déploiement</strong> &mdash; pourrait-il être déployé seul,
+      en théorie ? Il n'y a pas obligation de le faire. Mais si la réponse est
+      « impossible », la frontière est fictive.</li>
+  <li><strong>Le test du glossaire</strong> &mdash; peut-on écrire 10 termes définis
+      sans jamais renvoyer à un autre contexte ? Si chaque définition dit « voir le
+      contexte X », il n'y a qu'un contexte.</li>
+</ol>
+
+<h2 id="ce-que-ça-change-dans-le-code">Ce que ça change dans le code<a class="anchor" href="#ce-que-ça-change-dans-le-code" aria-label="Lien vers cette section">#</a></h2>
+
+<p><strong>Ce qui change :</strong></p>
+<ul>
+  <li>Un package racine par contexte, avec sa propre tranche verticale complète.</li>
+  <li><strong>Aucun import direct</strong> d'un contexte vers un autre, sauf
+      identités. Ce dépôt respecte déjà ça : <code>task</code> importe
+      <code>UserId</code> et rien d'autre.</li>
+  <li>Un contrat explicite à chaque frontière : identité partagée, événement
+      d'intégration, ou ACL.</li>
+  <li>Une règle import-linter par frontière, pour que ça reste vrai
+      (<a href="./01-regle-de-dependance.html">ch. 01</a>).</li>
+</ul>
+
+<p><strong>Ce qui ne change pas nécessairement :</strong></p>
+<ul>
+  <li><strong>Le nombre de bases de données.</strong> Un contexte peut vivre dans un
+      schéma logique de la même base. Séparer physiquement est une décision de
+      déploiement, pas de modélisation.</li>
+  <li><strong>Le nombre de services déployés.</strong> Un monolithe modulaire à 4
+      contextes est souvent supérieur à 4 microservices &mdash; et infiniment plus
+      facile à corriger quand une frontière s'avère fausse.</li>
+  <li><strong>L'existence d'un shared kernel minimal.</strong> Quelques classes sans
+      logique (bases d'exceptions, types techniques) sont acceptables. Dès qu'une
+      <strong>règle</strong> y entre, il faut le découper.</li>
+</ul>
+
+<div class="note">
+  <strong>La séquence saine</strong>
+  Découper d'abord en modules dans un monolithe. Vivre avec six mois. Extraire
+  ensuite ce qui a prouvé son autonomie. L'inverse &mdash; extraire avant d'avoir
+  vécu avec &mdash; est la façon la plus fiable de figer une mauvaise frontière dans
+  du réseau.
+</div>
+
+<h2 id="diagnostic">Diagnostic : ce dépôt a-t-il deux bounded contexts ?<a class="anchor" href="#diagnostic" aria-label="Lien vers cette section">#</a></h2>
+
+<p><code>task</code> et <code>user</code> sont souvent présentés comme deux bounded
+contexts. Passons-les aux cinq tests ci-dessus :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Test</th><th>Résultat</th></tr></thead>
+  <tbody>
+    <tr><td>Le mot</td><td><span class="pill pill-danger">non</span> <code>User</code> a <strong>un seul</strong> sens dans tout le système : le propriétaire d'une tâche. Aucune rupture de vocabulaire.</td></tr>
+    <tr><td>La transaction</td><td><span class="pill pill-danger">non</span> <code>CreateTask</code> vérifie l'existence du user <strong>dans la même transaction</strong>, et une FK <code>ON DELETE CASCADE</code> lie les tables.</td></tr>
+    <tr><td>L'équipe</td><td><span class="pill pill-danger">non</span> Une seule équipe, un seul dépôt.</td></tr>
+    <tr><td>Le déploiement</td><td><span class="pill pill-danger">non</span> Un service, une base, une migration <code>001_initial_schema.py</code> qui crée les deux tables.</td></tr>
+    <tr><td>Le glossaire</td><td><span class="pill pill-danger">non</span> Impossible d'écrire 10 termes de <code>task</code> sans parler de <code>user</code>, et réciproquement.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Verdict : ce sont deux agrégats dans un seul bounded context</strong>,
+organisés en modules. Pas deux contextes.</p>
+
+<h3 id="pourquoi-ce-nest-pas-grave">Pourquoi ce n'est pas grave &mdash; et pourquoi il faut le savoir<a class="anchor" href="#pourquoi-ce-nest-pas-grave" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Ce n'est pas grave, pour trois raisons :</p>
+
+<ol>
+  <li><strong>Le découpage est bon quand même.</strong> Deux agrégats bien séparés,
+      référencés par identité, sans import croisé : c'est exactement ce qu'il faut
+      faire. Le travail est juste ; c'est l'<strong>étiquette</strong> qui est trop
+      ambitieuse.</li>
+  <li><strong>Le métier ne justifie pas deux contextes.</strong> Le dépôt le dit
+      lui-même : « le métier est volontairement simple ». Un domaine à deux entités
+      n'a structurellement pas assez de sens pour avoir deux vocabulaires.</li>
+  <li><strong>Ça prépare bien la suite.</strong> Le fait que <code>task</code> ne
+      connaisse qu'un <code>UserId</code> rend l'extraction future presque gratuite.
+      C'est le bénéfice réel, et il est acquis.</li>
+</ol>
+
+<p>Mais il faut le savoir, pour une raison précise : <strong>ce dépôt se présente
+comme une référence à reproduire.</strong> Quelqu'un qui le copie apprend « bounded
+context = sous-dossier par entité ». C'est le contresens exact que le
+<a href="./03-le-domaine.html#ddd-stratégique-en-15-minutes">chapitre 03</a> essaie
+d'éviter.</p>
+
+<h3 id="à-quoi-ressemblerait-un-vrai-second-contexte">À quoi ressemblerait un vrai second contexte ici<a class="anchor" href="#à-quoi-ressemblerait-un-vrai-second-contexte" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le candidat évident est absent du dépôt : <strong>l'authentification</strong>. Un
+<code>grep</code> sur <code>auth|jwt|token|password</code> dans <code>src/</code> ne
+renvoie rien. C'est le cas d'école parfait, parce que le mot <code>User</code> y
+prendrait enfin un <strong>second sens</strong> :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Contexte <code>identity</code></th><th>Contexte <code>task</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>User</code> désigne</td><td>un compte : identifiants, mot de passe haché, sessions, rôles</td><td>un propriétaire : un nom, un e-mail de contact</td></tr>
+    <tr><td>Cycle de vie</td><td>création, activation, verrouillage, suppression RGPD</td><td>existe tant qu'il a des tâches</td></tr>
+    <tr><td>Ce qui traverse</td><td><code>UserId</code>, et rien d'autre</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Voilà une <strong>vraie</strong> rupture de vocabulaire, donc une vraie frontière.
+Elle justifierait un ACL minuscule et démontrerait le stratégique par le code.</p>
+
+<h3 id="ce-quil-ne-faut-pas-en-conclure">Ce qu'il ne faut pas en conclure<a class="anchor" href="#ce-quil-ne-faut-pas-en-conclure" aria-label="Lien vers cette section">#</a></h3>
+
+<ul>
+  <li><strong>Qu'il faudrait découper <code>task</code> et <code>user</code> en deux
+      services.</strong> Aucun des cinq tests ne le justifie, et ça coûterait la
+      cohérence référentielle (la FK <code>ON DELETE CASCADE</code> deviendrait un
+      processus de compensation).</li>
+  <li><strong>Qu'il faudrait ajouter des contextes pour la démonstration.</strong> Un
+      <code>billing</code> sans besoin réel produirait exactement le mauvais
+      exemple : des frontières décoratives.</li>
+  <li><strong>Que les dossiers sont mal nommés.</strong> <code>domain/task/</code> et
+      <code>domain/user/</code> sont très bien. C'est le <em>vocabulaire</em> employé
+      autour qui sur-vend, pas la structure.</li>
+</ul>
+
+<div class="note">
+  <strong>Le piège du mot prestigieux</strong>
+  « Bounded context » sonne mieux que « module ». C'est précisément pour ça qu'il
+  faut se surveiller : le terme le plus flatteur est rarement le plus exact.
+</div>
+
+<h2 id="pour-aller-plus-loin-strategique">Pour aller plus loin<a class="anchor" href="#pour-aller-plus-loin-strategique" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Domain-Driven Design</strong> (Eric Evans) &mdash; parties
+      <strong>IV et V</strong>, les deux tiers du livre que presque personne ne lit.
+      C'est là qu'est le stratégique.</li>
+  <li><strong>Domain-Driven Design Distilled</strong> (Vaughn Vernon) &mdash; 150
+      pages, va droit au stratégique. Le meilleur rapport temps/valeur du domaine.</li>
+  <li><strong>Introducing EventStorming</strong> (Alberto Brandolini) &mdash; la
+      méthode de l'étape 1, par son auteur.</li>
+  <li><strong>Team Topologies</strong> (Skelton &amp; Pais) &mdash; le lien entre
+      frontières logicielles et frontières d'équipes ; le complément moderne
+      indispensable au chapitre « contextes » d'Evans.</li>
+</ul>
+
+<nav class="pager">
+  <a href="./14-annexes.html">&larr; 14. Annexes</a>
+  <a href="./index.html">Retour au sommaire &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

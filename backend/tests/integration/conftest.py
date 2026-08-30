@@ -21,7 +21,6 @@ cases (chemin d'écriture réel), jamais en SQL brut.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
-from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -31,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
-from task_manager.application.shared.messaging import EventPublisherPort
+from task_manager.application.shared.messaging import EventPublisherPort, IntegrationEvent
 from task_manager.application.task.dto import CreateTaskCommand, TaskDTO
 from task_manager.application.task.use_cases.create_task import CreateTask
 from task_manager.application.user.dto import CreateUserCommand, UserDTO
@@ -58,7 +57,7 @@ class _NoOpMessageAdapter(EventPublisherPort):
     async def close(self) -> None:
         return None
 
-    async def publish(self, routing_key: str, payload: dict[str, Any]) -> None:
+    async def publish(self, event: IntegrationEvent) -> None:
         return None
 
 

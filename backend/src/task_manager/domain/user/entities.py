@@ -43,6 +43,29 @@ class User:
             created_at=_now(),
         )
 
+    @classmethod
+    def reconstitute(
+        cls,
+        *,
+        id: UserId,
+        name: UserName,
+        email: Email,
+        created_at: datetime,
+    ) -> User:
+        """Reconstruit un utilisateur **qui existe déjà** (import, restauration).
+
+        Pendant de :meth:`Task.reconstitute`. Contrairement à elle, il n'y a ici
+        aucun invariant inter-champs à vérifier : la validité d'un ``User`` se
+        réduit à celle de son nom et de son e-mail, tous deux déjà garantis par
+        leurs value objects.
+
+        La méthode existe malgré tout, et ce n'est pas de la cérémonie : elle
+        **nomme l'intention**. ``User(...)`` ne dit pas si l'on crée ou si l'on
+        relit ; ``User.reconstitute(...)`` le dit, et signale au lecteur que
+        l'identifiant et la date de création viennent du dehors.
+        """
+        return cls(id=id, name=name, email=email, created_at=created_at)
+
     def rename(self, name: UserName) -> None:
         """Change le nom d'affichage de l'utilisateur."""
         self.name = name

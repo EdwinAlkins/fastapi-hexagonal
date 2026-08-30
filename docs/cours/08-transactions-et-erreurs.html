@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>08. Transactions &amp; erreurs &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="La transaction entoure le use case, pas le repository. Deux hiérarchies d'erreurs — métier en 4xx, technique en 503 — et la composition root.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html" aria-current="page"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>08. Transactions, erreurs &amp; câblage</h1>
+  <p class="lede">Trois préoccupations qui traversent toutes les couches. Elles se
+  traitent une fois, au bon endroit.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; La transaction entoure le <strong>use case</strong>,
+  pas le repository ; chaque adaptateur entrant fournit cette frontière. Les
+  erreurs <strong>métier</strong> et les erreurs <strong>techniques</strong> ont
+  deux hiérarchies distinctes, mappées différemment en HTTP. La <strong>composition
+  root</strong> est le point où les implémentations concrètes sont assemblées avec
+  les abstractions qu'elles réalisent.
+</div>
+
+<h2 id="1-la-frontière-transactionnelle">1. La frontière transactionnelle<a class="anchor" href="#1-la-frontière-transactionnelle" aria-label="Lien vers cette section">#</a></h2>
+
+<h3 id="la-règle-correctement-formulée">La règle, correctement formulée<a class="anchor" href="#la-règle-correctement-formulée" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Qui décide du <code>commit</code> / <code>rollback</code> ? <strong>Pas le
+repository.</strong> Sinon un use case qui fait deux écritures ne pourrait pas les
+rendre atomiques.</p>
+
+<p>La formulation qu'on lit souvent &mdash; <em>« la transaction, c'est la requête
+HTTP »</em> &mdash; est trompeuse : elle est vraie de l'API, et fausse dès qu'un
+autre canal existe. La bonne formulation est :</p>
+
+<blockquote>
+  <p><strong>La transaction entoure le use case.</strong> Chaque adaptateur entrant
+  fournit cette frontière avec les moyens de son canal.</p>
+</blockquote>
+
+<figure class="diagram">
+<svg viewBox="0 0 560 400" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="L'adaptateur entrant ouvre la frontière transactionnelle, appelle le use case qui pilote les repositories ; ceux-ci mutent la session sans jamais committer. En cas de succès, commit ; en cas d'erreur, rollback et propagation.">
+  <defs>
+    <marker id="f8a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="150" y="14" width="260" height="48" rx="7"/>
+      <rect x="130" y="88" width="300" height="42" rx="7"/>
+      <rect x="120" y="224" width="320" height="50" rx="7"/>
+    </g>
+    <rect x="200" y="156" width="160" height="42" rx="7" fill="var(--raised)" stroke="var(--accent)"/>
+    <polygon points="280,288 348,312 280,336 212,312" fill="var(--surface)" stroke="var(--line)"/>
+    <rect x="360" y="356" width="150" height="34" rx="6" fill="var(--surface)" stroke="var(--ok)"/>
+    <rect x="50" y="356" width="250" height="34" rx="6" fill="var(--surface)" stroke="var(--danger)"/>
+
+    <g fill="var(--ink)" font-size="12" font-weight="600" text-anchor="middle">
+      <text x="280" y="36">Adaptateur entrant</text>
+      <text x="280" y="114">Ouvre la frontière transactionnelle</text>
+      <text x="280" y="182">Use case</text>
+      <text x="280" y="246">Repositories</text>
+      <text x="280" y="317">Succès&#160;?</text>
+    </g>
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="280" y="52">API &#183; CLI &#183; worker</text>
+      <text x="280" y="263">mutent la session, ne committent jamais</text>
+    </g>
+    <text x="435" y="378" fill="var(--ok)" font-size="11.5" font-weight="600" text-anchor="middle">commit</text>
+    <text x="175" y="378" fill="var(--danger)" font-size="11.5" font-weight="600" text-anchor="middle">rollback + propagation</text>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f8a)">
+      <line x1="280" y1="62" x2="280" y2="86"/>
+      <line x1="280" y1="130" x2="280" y2="154"/>
+      <line x1="280" y1="198" x2="280" y2="222"/>
+      <line x1="280" y1="274" x2="280" y2="286"/>
+      <path d="M 348 312 L 435 312 L 435 354"/>
+      <path d="M 212 312 L 175 312 L 175 354"/>
+    </g>
+    <g fill="var(--muted)" font-size="10.5" font-weight="600">
+      <text x="378" y="306">oui</text>
+      <text x="182" y="306">non</text>
+    </g>
+  </g>
+</svg>
+</figure>
+
+<h3 id="les-trois-implémentations-de-ce-projet">Les trois implémentations de ce projet<a class="anchor" href="#les-trois-implémentations-de-ce-projet" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Même principe, trois déclencheurs :</p>
+
+<div class="snippet" data-lang="python"><pre><code># 1. API — presentation/api/dependencies/session.py : une transaction par requête
+async def get_session(request: Request) -&gt; AsyncIterator[AsyncSession]:
+    session_factory = request.app.state.session_factory
+    async with session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise</code></pre></div>
+
+<div class="snippet" data-lang="python"><pre><code># 2. CLI — presentation/cli/app.py : une transaction par commande
+@asynccontextmanager
+async def transactional_session() -&gt; AsyncIterator[AsyncSession]:
+    ...
+    async with session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise</code></pre></div>
+
+<div class="snippet" data-lang="python"><pre><code># 3. Worker — presentation/worker/__main__.py : une transaction par message
+async with session_factory() as session:
+    use_case = NotifyTaskShared(...)
+    try:
+        await process_message(incoming, use_case, dlx)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise</code></pre></div>
+
+<p>Trois fois le même schéma, trois cycles de vie différents. <strong>C'est ça, la
+frontière transactionnelle du use case</strong> &mdash; et c'est pour ça qu'il
+faut se méfier des formules qui la collent au protocole.</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Frontière transactionnelle</td><td>Entoure l'unité de travail (le use case)</td><td>Fournie par chaque adaptateur entrant : dépendance FastAPI, context manager CLI, wrapper de message</td></tr>
+    <tr><td>Gestion transactionnelle</td><td>Une responsabilité à situer explicitement</td><td>Repositories sans commit + session injectée ≈ <em>Unit of Work</em> léger</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="ce-que-ce-choix-te-donne">Ce que ce choix te donne<a class="anchor" href="#ce-que-ce-choix-te-donne" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un use case peut enchaîner plusieurs écritures dans <strong>une seule
+transaction atomique</strong>, sans le savoir. Il ne connaît ni <code>commit</code>,
+ni <code>rollback</code>, ni même <code>AsyncSession</code> &mdash; il ne voit que
+des ports.</p>
+
+<p>C'est une forme légère d'<strong><em>Unit of Work</em></strong> : le pattern où
+une unité de travail regroupe les modifications et les valide d'un bloc. D'autres
+modèles existent &mdash; Unit of Work explicite passé au use case, décorateur
+<code>@transactional</code>, transaction script &mdash; et sont tout aussi
+défendables. Ce qui compte est que la <strong>responsabilité transactionnelle soit
+située et unique</strong>, pas la forme exacte.</p>
+
+<h3 id="les-limites-à-connaître">Les limites à connaître<a class="anchor" href="#les-limites-à-connaître" aria-label="Lien vers cette section">#</a></h3>
+
+<ul>
+  <li><strong>Effets non transactionnels.</strong> Un e-mail envoyé ou un message
+      publié pendant la transaction ne se « rollback » pas. Le sujet est assez
+      important pour avoir sa propre section :
+      <a href="#2-les-effets-externes--le-problème-du-double-write">voir plus bas</a>.</li>
+  <li><strong>Transactions longues.</strong> Une frontière calée sur la requête
+      tient tant que les requêtes sont courtes. Un traitement de plusieurs minutes
+      doit être découpé &mdash; et ce dépôt en contient un, l'import en masse, qui
+      <strong>committe pendant le use case</strong> via un <code>UnitOfWorkPort</code>.
+      C'est la seule entorse, elle est explicite, et elle est traitée au
+      <a href="./10-ecritures-en-masse.html#la-transaction--ni-une-par-ligne-ni-une-pour-tout">chapitre 10</a>.
+      La règle «&nbsp;un repository ne committe jamais&nbsp;», elle, ne bouge pas : le
+      pouvoir de committer se <strong>demande</strong> par un port, il ne s'obtient pas
+      par effet de bord.</li>
+  <li><strong>PgBouncer en mode transaction.</strong> L'infrastructure de ce projet
+      impose ses contraintes (pas de <code>LISTEN/NOTIFY</code>, pas de curseur
+      <code>WITH HOLD</code>, cache de <em>prepared statements</em> désactivé).</li>
+</ul>
+
+<h2 id="2-les-effets-externes--le-problème-du-double-write">2. Les effets externes : le problème du double write<a class="anchor" href="#2-les-effets-externes--le-problème-du-double-write" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Tout ce qui précède suppose un monde simple : une transaction, une base, un
+commit. Le monde réel en sort dès qu'une opération doit <strong>aussi</strong>
+envoyer un e-mail, publier un message ou appeler une API tierce.</p>
+
+<h3 id="le-problème-posé-précisément">Le problème, posé précisément<a class="anchor" href="#le-problème-posé-précisément" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Une seule opération métier, deux systèmes qui ne partagent aucune transaction :</p>
+
+<div class="snippet" data-lang="text"><pre><code>« partager une tâche » =  écrire en base        (PostgreSQL)
+                        + publier un message    (RabbitMQ)</code></pre></div>
+
+<p>On ne peut pas les rendre atomiques. Il n'existe que deux ordres possibles, et
+<strong>les deux sont cassés</strong> :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Ordre</th><th>Ce qui casse</th><th>Résultat</th></tr></thead>
+  <tbody>
+    <tr><td>Publier <strong>puis</strong> committer</td><td>Le commit échoue après la publication</td><td>Message <strong>fantôme</strong> : le worker traite une tâche qui n'existe pas</td></tr>
+    <tr><td>Committer <strong>puis</strong> publier</td><td>Le process meurt entre les deux</td><td>Message <strong>perdu</strong> : la donnée est là, l'effet n'a jamais eu lieu</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>C'est le <strong><em>dual write problem</em></strong>, et le point à comprendre
+est qu'il n'a <strong>aucune solution par réordonnancement</strong>. Déplacer la
+publication ne fait que choisir quel type de panne on préfère. Il faut changer de
+mécanisme.</p>
+
+<div class="note">
+  <strong>Le choix de ce projet</strong>
+  <code>ShareTask</code> publie, puis la dépendance de session commit. Il préfère
+  donc le message fantôme au message perdu &mdash; ce qui, pour une notification
+  par e-mail, est le bon compromis : un e-mail en trop est gênant, un partage
+  silencieusement non notifié l'est davantage.
+</div>
+
+<h3 id="loutbox--rendre-lintention-transactionnelle">L'outbox : rendre l'intention transactionnelle<a class="anchor" href="#loutbox--rendre-lintention-transactionnelle" aria-label="Lien vers cette section">#</a></h3>
+
+<p>L'idée tient en une phrase : <strong>on n'écrit pas dans le broker, on écrit
+dans la base &mdash; dans la même transaction que la donnée métier.</strong></p>
+
+<div class="snippet" data-lang="sql"><pre><code>CREATE TABLE outbox (
+    id            uuid PRIMARY KEY,
+    name          text        NOT NULL,   -- le type d'événement
+    payload       jsonb       NOT NULL,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    published_at  timestamptz              -- NULL tant que non publié
+);
+CREATE INDEX ON outbox (created_at) WHERE published_at IS NULL;</code></pre></div>
+
+<div class="snippet" data-lang="python"><pre><code># Le use case n'appelle plus le broker : il écrit une ligne.
+async def execute(self, ...) -&gt; None:
+    task = await self._tasks.get(task_id)
+    event = ShareTaskNotification(task_id=..., user_ids=..., ...)
+    await self._outbox.add(event)      # même session, même transaction
+    # le commit de la frontière transactionnelle rend les deux atomiques</code></pre></div>
+
+<p>Un <strong>relais</strong> séparé lit ensuite les lignes non publiées, les
+envoie au broker, et les marque publiées. La donnée et l'intention de publier
+deviennent atomiques : si la transaction échoue, il n'y a ni tâche partagée, ni
+ligne d'outbox.</p>
+
+<h3 id="le-coût-que-loutbox-déplace--il-ne-le-supprime-pas">Le coût que l'outbox déplace &mdash; il ne le supprime pas<a class="anchor" href="#le-coût-que-loutbox-déplace--il-ne-le-supprime-pas" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est le point que la plupart des présentations escamotent. Le relais peut
+mourir <strong>après</strong> avoir publié et <strong>avant</strong> d'avoir marqué
+la ligne. Au redémarrage, il republie.</p>
+
+<div class="warn">
+  <strong>L'outbox garantit l'<em>at-least-once</em>, jamais l'<em>exactly-once</em></strong>
+  Elle transforme « le message peut être perdu ou fantôme » en « le message
+  arrivera, peut-être plusieurs fois ». C'est un progrès énorme &mdash; mais il rend
+  l'<strong>idempotence du consommateur obligatoire</strong>, pas optionnelle.
+</div>
+
+<p>Autrement dit : adopter l'outbox sans rendre le consommateur idempotent, c'est
+échanger une perte silencieuse contre des doublons silencieux. On n'a pas résolu le
+problème, on l'a déplacé chez le voisin.</p>
+
+<h3 id="rendre-un-consommateur-idempotent">Rendre un consommateur idempotent<a class="anchor" href="#rendre-un-consommateur-idempotent" aria-label="Lien vers cette section">#</a></h3>
+
+<p>L'idempotence n'est pas une propriété du message : c'est une propriété du
+<strong>traitement</strong>. Trois techniques, par ordre de préférence.</p>
+
+<p><strong>1. L'opération est naturellement idempotente.</strong> La meilleure
+solution est de ne pas avoir besoin de mécanisme :</p>
+
+<div class="snippet" data-lang="python"><pre><code>task.complete()                 # rejouable : le 2ᵉ appel lève TaskAlreadyCompleted
+counter += 1                    # ❌ NON idempotent
+SET status = 'done'             # ✅ idempotent</code></pre></div>
+
+<p><strong>2. Une table de déduplication</strong>, quand l'effet ne peut pas être
+rendu idempotent (envoyer un e-mail, débiter une carte) :</p>
+
+<div class="snippet" data-lang="python"><pre><code>async def handle(self, message_id: str, event: ShareTaskNotification) -&gt; None:
+    try:
+        await self._processed.record(message_id)   # INSERT, PK = message_id
+    except AlreadyProcessed:
+        return                                     # déjà traité : on acquitte, on sort
+    await self._do_the_work(event)</code></pre></div>
+
+<p>La garantie ne vient pas du code mais de la <strong>contrainte d'unicité en
+base</strong> &mdash; même schéma que pour l'unicité d'e-mail
+(<a href="./02-ou-vit-une-regle.html">ch. 02</a>) : l'application donne le message,
+la base donne la garantie.</p>
+
+<p><strong>3. Une clé métier plutôt qu'un identifiant de message.</strong>
+Dédupliquer sur <code>(task_id, user_id, jour)</code> plutôt que sur un UUID protège
+aussi contre un <em>republish</em> légitime après un changement de code. Plus
+robuste, plus difficile à définir.</p>
+
+<div class="note">
+  <strong>Le piège de l'ordre</strong>
+  Enregistrer le message <em>après</em> le traitement laisse une fenêtre où un crash
+  provoque un doublon. L'enregistrer <em>avant</em> laisse une fenêtre où un crash
+  empêche le traitement. Il n'y a pas d'ordre parfait &mdash; mais « enregistrer
+  d'abord » échoue du bon côté : on perd un traitement, ce qui se détecte et se
+  rejoue, plutôt que d'envoyer deux fois un e-mail, qui ne se reprend pas.
+</div>
+
+<h3 id="comment-le-relais-lit-il-loutbox-">Comment le relais lit-il l'outbox ?<a class="anchor" href="#comment-le-relais-lit-il-loutbox-" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Mécanisme</th><th>Latence</th><th>Coût</th><th>Remarque</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Polling</strong> (<code>SELECT … WHERE published_at IS NULL</code>)</td><td>l'intervalle</td><td>trivial</td><td>Le choix par défaut ; index partiel obligatoire</td></tr>
+    <tr><td><strong><code>LISTEN</code>/<code>NOTIFY</code></strong></td><td>immédiate</td><td>faible</td><td><strong>Indisponible ici</strong> : PgBouncer en mode transaction l'interdit (<a href="../infra/01-donnees.html">infra ch. 01</a>)</td></tr>
+    <tr><td><strong>CDC</strong> (Debezium, réplication logique)</td><td>quasi immédiate</td><td>élevé</td><td>Un composant de plus à exploiter ; pertinent à grande échelle</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>La deuxième ligne est un bel exemple de ce que le cours répète : une contrainte
+d'infrastructure décidée ailleurs &mdash; le mode transaction du pooler &mdash;
+ferme une option de conception. Sur ce projet, le relais serait forcément un
+<em>poller</em>.</p>
+
+<h3 id="et-si-plusieurs-agrégats-sont-modifiés-">Et si plusieurs agrégats sont modifiés ?<a class="anchor" href="#et-si-plusieurs-agrégats-sont-modifiés-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est l'autre moitié de la question, et elle a une réponse plus simple.</p>
+
+<p><strong>Dans un monolithe sur une base unique</strong>, modifier deux agrégats
+dans une même transaction fonctionne, sans mécanisme particulier. C'est une
+dérogation assumée à « un agrégat par transaction »
+(<a href="./04-les-agregats.html#une-transaction-un-agrégat--vraiment-">ch. 04</a>),
+et elle est parfaitement tenable tant que la base est partagée.</p>
+
+<p><strong>Dès que les agrégats vivent dans deux services</strong>, la transaction
+commune disparaît. Deux familles de réponses :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Approche</th><th>Principe</th><th>Quand</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Cohérence à terme</strong></td><td>Chacun commit chez lui, un événement propage</td><td>Le cas courant : l'écart temporaire est tolérable</td></tr>
+    <tr><td><strong>Saga</strong></td><td>Une suite d'étapes locales, avec une <strong>compensation</strong> par étape</td><td>Quand l'échec d'une étape tardive doit défaire les précédentes</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Une saga ne remplace pas l'outbox : elle a besoin d'une messagerie fiable pour
+enchaîner ses étapes, donc <strong>elle repose dessus</strong>. Les deux patterns
+répondent à des questions différentes &mdash; l'outbox à « comment publier de façon
+fiable ? », la saga à « comment défaire ce qui a déjà réussi ? ».</p>
+
+<p>Quant au <strong>2PC / XA</strong> (validation en deux phases) : techniquement il
+résout le problème, en pratique il est écarté presque partout. Les brokers modernes
+le supportent mal, il maintient des verrous ouverts à travers plusieurs systèmes, et
+un coordinateur qui tombe laisse des transactions en suspens qu'il faut résoudre à
+la main.</p>
+
+<h3 id="en-a-t-on-vraiment-besoin-">En a-t-on vraiment besoin ?<a class="anchor" href="#en-a-t-on-vraiment-besoin-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Deux questions suffisent à trancher, et elles ne portent pas sur la technique :</p>
+
+<ol>
+  <li><strong>Que se passe-t-il si ce message est perdu ?</strong></li>
+  <li><strong>Que se passe-t-il si ce message arrive deux fois ?</strong></li>
+</ol>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Perte</th><th>Doublon</th><th>Réponse</th></tr></thead>
+  <tbody>
+    <tr><td>tolérable</td><td>tolérable</td><td>Publication directe. C'est le cas de ce projet.</td></tr>
+    <tr><td>tolérable</td><td>inacceptable</td><td>Consommateur idempotent, sans outbox</td></tr>
+    <tr><td>inacceptable</td><td>tolérable</td><td><strong>Outbox</strong></td></tr>
+    <tr><td>inacceptable</td><td>inacceptable</td><td><strong>Outbox + consommateur idempotent</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Pour une notification d'e-mail sur le partage d'une tâche, les deux réponses
+sont « tolérable » : la ligne 1 s'applique, et l'absence d'outbox est un choix
+défendable. Pour un débit bancaire, la ligne 4 s'impose.</p>
+
+<p>Une troisième option, souvent oubliée et parfois la meilleure : <strong>la
+réconciliation périodique</strong>. Un travail nocturne qui compare les deux
+systèmes et rattrape les écarts coûte bien moins cher qu'un outbox, et suffit quand
+la latence de correction est acceptable.</p>
+
+<h2 id="3-deux-familles-derreurs">3. Deux familles d'erreurs<a class="anchor" href="#3-deux-familles-derreurs" aria-label="Lien vers cette section">#</a></h2>
+
+<h3 id="métier--technique">Métier ≠ technique<a class="anchor" href="#métier--technique" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le domaine lève des <strong>exceptions métier</strong> ; il ignore HTTP. Mais
+tout n'est pas métier : une base injoignable, un timeout SMTP, un broker down sont
+des échecs <strong>techniques</strong>. Les confondre conduit à renvoyer un 400
+pour une panne réseau &mdash; et à faire croire au client que sa requête était
+fautive.</p>
+
+<p>Ce projet maintient donc <strong>deux hiérarchies parallèles</strong> :</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 700 330" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="À gauche, la hiérarchie des erreurs métier : DomainError donne 400, et ses spécialisations ValidationError 422, NotFoundError 404 et ConflictError 409, avec leurs exceptions concrètes. À droite, la hiérarchie technique : InfrastructureError donne 503, spécialisée par EmailSendError.">
+  <defs>
+    <marker id="f8b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <rect x="8" y="30" width="430" height="288" rx="8" fill="none" stroke="var(--line)" stroke-dasharray="4 4"/>
+    <rect x="458" y="30" width="234" height="288" rx="8" fill="none" stroke="var(--line)" stroke-dasharray="4 4"/>
+    <text x="223" y="22" fill="var(--muted)" font-size="10.5" letter-spacing="0.05em" text-anchor="middle">ERREURS MÉTIER &#183; domain/shared/</text>
+    <text x="575" y="22" fill="var(--muted)" font-size="10.5" letter-spacing="0.05em" text-anchor="middle">ERREURS TECHNIQUES &#183; application/shared/</text>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="138" y="48" width="170" height="34" rx="6"/>
+      <rect x="22" y="122" width="126" height="34" rx="6"/>
+      <rect x="160" y="122" width="126" height="34" rx="6"/>
+      <rect x="298" y="122" width="126" height="34" rx="6"/>
+      <rect x="22" y="204" width="126" height="46" rx="6"/>
+      <rect x="160" y="204" width="126" height="46" rx="6"/>
+      <rect x="298" y="204" width="126" height="46" rx="6"/>
+      <rect x="478" y="48" width="196" height="34" rx="6"/>
+      <rect x="498" y="122" width="156" height="34" rx="6"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="10.5" font-weight="600" text-anchor="middle">
+      <text x="223" y="69">DomainError → 400</text>
+      <text x="85" y="143">ValidationError → 422</text>
+      <text x="223" y="143">NotFoundError → 404</text>
+      <text x="361" y="143">ConflictError → 409</text>
+      <text x="576" y="69">InfrastructureError → 503</text>
+      <text x="576" y="143">EmailSendError</text>
+    </g>
+    <g fill="var(--muted)" font-size="10" text-anchor="middle">
+      <text x="85" y="223">InvalidEmail</text>
+      <text x="85" y="238">EmptyTitle</text>
+      <text x="223" y="223">TaskNotFound</text>
+      <text x="223" y="238">UserNotFound</text>
+      <text x="361" y="231">EmailAlreadyUsed</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f8b)">
+      <path d="M 190 82 L 85 100 L 85 120"/>
+      <line x1="223" y1="82" x2="223" y2="120"/>
+      <path d="M 256 82 L 361 100 L 361 120"/>
+      <line x1="85" y1="156" x2="85" y2="202"/>
+      <line x1="223" y1="156" x2="223" y2="202"/>
+      <line x1="361" y1="156" x2="361" y2="202"/>
+      <line x1="576" y1="82" x2="576" y2="120"/>
+    </g>
+
+    <text x="576" y="200" fill="var(--muted)" font-size="10.5" text-anchor="middle">journalisées</text>
+    <text x="576" y="216" fill="var(--muted)" font-size="10.5" text-anchor="middle">détail masqué au client</text>
+    <text x="223" y="284" fill="var(--muted)" font-size="10.5" text-anchor="middle">non journalisées : c'est un fonctionnement normal</text>
+  </g>
+</svg>
+</figure>
+
+<p>Le critère de tri est simple :</p>
+
+<blockquote>
+  <p><strong>Le client peut-il corriger sa requête ?</strong> Oui → erreur métier
+  (4xx). Non, c'est une dépendance qui est en panne → erreur technique (5xx).</p>
+</blockquote>
+
+<h3 id="le-mapping-une-fois-pour-toutes">Le mapping, une fois pour toutes<a class="anchor" href="#le-mapping-une-fois-pour-toutes" aria-label="Lien vers cette section">#</a></h3>
+
+<p>L'astuce qui évite un handler par exception : mapper les <strong>bases
+sémantiques</strong>.</p>
+
+<div class="snippet" data-lang="python"><pre><code># presentation/api/error_handlers.py
+@app.exception_handler(NotFoundError)
+async def _not_found(_, exc): return _error(404, str(exc))
+
+@app.exception_handler(ConflictError)
+async def _conflict(_, exc): return _error(409, str(exc))
+
+# + ValidationError → 422, DomainError → 400 (repli)
+
+@app.exception_handler(InfrastructureError)
+async def _service_unavailable(_, exc):
+    logger.error("Dépendance technique indisponible : %s", exc, exc_info=exc)
+    return _error(503, "Une dépendance technique est indisponible.")</code></pre></div>
+
+<p>Quatre détails qui comptent :</p>
+
+<ol>
+  <li><strong>Un nouveau bounded context est couvert sans toucher ce fichier.</strong>
+      Il suffit que ses exceptions héritent de la bonne base : FastAPI remonte la
+      hiérarchie de classes pour trouver le handler.</li>
+  <li><strong>503, pas 500.</strong> Une dépendance externe indisponible est un
+      problème transitoire et extérieur, pas une anomalie du service.</li>
+  <li><strong>On journalise les erreurs techniques, pas les erreurs métier.</strong>
+      Un 404 est un fonctionnement normal ; polluer les logs avec ferait perdre les
+      vrais incidents.</li>
+  <li><strong>On ne renvoie pas le détail technique au client.</strong> Le message
+      d'une <code>InfrastructureError</code> peut contenir un hôte, un port, une
+      trace &mdash; il reste dans les logs.</li>
+</ol>
+
+<p>Et une règle de discipline qui découle du reste : <strong>jamais de
+<code>HTTPException</code> en dehors de <code>presentation/</code>.</strong> Lever
+un code HTTP dans un use case, c'est décider du protocole depuis une couche qui
+n'est pas censée le connaître &mdash; et casser immédiatement le CLI et le worker.</p>
+
+<h3 id="où-logger-">Où logger ?<a class="anchor" href="#où-logger-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Corollaire : le <strong>domaine ne logge pas</strong>. Un logger est un effet de
+bord et une dépendance ; le domaine doit rester une fonction pure de ses entrées.
+Les logs appartiennent aux use cases (<code>GetUser</code> trace ses hits/miss de
+cache) et surtout aux adaptateurs, où le contexte technique existe vraiment.</p>
+
+<h2 id="4-la-composition-root">4. La composition root<a class="anchor" href="#4-la-composition-root" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Quelque part, il faut relier le port abstrait (<code>TaskRepository</code>) à
+son implémentation (<code>SqlAlchemyTaskRepository</code>). Ce point de câblage
+s'appelle la <strong>composition root</strong> : le point où les implémentations
+concrètes sont assemblées avec les abstractions qu'elles réalisent.</p>
+
+<div class="note">
+  <strong>Formulation à ne pas caricaturer</strong>
+  On lit souvent « le seul endroit qui connaît les deux mondes ». C'est faux au
+  pied de la lettre &mdash; <code>SqlAlchemyTaskRepository</code> connaît
+  évidemment <code>TaskRepository</code> (il en hérite) <em>et</em> SQLAlchemy : un
+  adaptateur n'est pas ignorant de ce qu'il adapte. Ce que la composition root
+  détient d'unique, c'est la <strong>décision d'association</strong> : « pour cette
+  exécution, ce port sera servi par cet adaptateur-là ». C'est cette décision, et
+  elle seule, qui doit rester en un point unique &mdash; sinon elle se disperse en
+  imports concrets un peu partout, et plus rien n'est substituable.
+</div>
+
+<p>Dans ce projet, c'est le package <code>presentation/api/dependencies/</code>,
+via l'injection de dépendances de FastAPI :</p>
+
+<div class="snippet" data-lang="python"><pre><code># dependencies/repositories.py — port ← adaptateur
+def get_task_repository(session: SessionDep) -&gt; TaskRepository:
+    return SqlAlchemyTaskRepository(session)
+
+# dependencies/task.py — use case ← ses ports
+def get_create_task(tasks: TaskRepositoryDep, users: UserRepositoryDep) -&gt; CreateTask:
+    return CreateTask(tasks, users)</code></pre></div>
+
+<p>Son organisation est délibérée :</p>
+
+<ul>
+  <li><code>session.py</code> et <code>repositories.py</code> sont
+      <strong>transverses</strong> ; <code>task.py</code> et <code>user.py</code>
+      sont <strong>par contexte</strong>, et ne s'importent jamais entre eux ;</li>
+  <li>l'<code>__init__.py</code> est une <strong>façade</strong> qui réexpose tout :
+      les routers, l'app et les tests importent depuis
+      <code>...api.dependencies</code>. C'est légitime <strong>ici</strong>, parce
+      que le rôle même d'une composition root est d'être un point d'entrée unique
+      &mdash; ce n'est pas un motif à copier partout
+      (<a href="./12-organisation-et-tests.html#la-bonne-dose-de-centralisation">ch. 12</a>).</li>
+</ul>
+
+<p>Ce n'est pas la seule organisation possible : d'autres projets placent la
+composition root dans un package <code>bootstrap/</code> ou <code>container/</code>
+à la racine, en particulier quand plusieurs adaptateurs driving doivent la
+partager. Ici, le CLI et le worker construisent leurs dépendances à la main
+&mdash; c'est acceptable à cette échelle, et ça deviendrait une duplication à
+surveiller si les use cases câblés se multipliaient.</p>
+
+<p><strong>C'est aussi ce qui rend les tests faciles</strong> : substituer un
+adaptateur ne touche à rien d'autre. Les tests d'intégration remplacent
+<code>get_session</code> par une dépendance équivalente pointant sur la base de
+test, et injectent un publisher inerte à la place de RabbitMQ &mdash; le reste du
+câblage reste authentique.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>La transaction entoure le <strong>use case</strong> ; chaque adaptateur
+      entrant fournit la frontière (requête, commande CLI, message).</li>
+  <li>Les repositories <strong>ne committent jamais</strong> et
+      <strong>reçoivent</strong> leur session : c'est un <em>Unit of Work</em>
+      léger, un choix parmi d'autres &mdash; mais la responsabilité doit être
+      située quelque part, explicitement.</li>
+  <li>Les effets externes ne se rollback pas : c'est le <strong>dual write
+      problem</strong>, et il n'a pas de solution par réordonnancement.</li>
+  <li>L'<strong>outbox</strong> rend l'intention de publier transactionnelle, mais
+      garantit l'<em>at-least-once</em> : elle rend l'<strong>idempotence du
+      consommateur obligatoire</strong>.</li>
+  <li>L'idempotence est une propriété du <strong>traitement</strong>, pas du
+      message : opération naturellement rejouable, sinon déduplication garantie par
+      une contrainte en base.</li>
+  <li>Deux questions décident du besoin : que coûte une <strong>perte</strong> ?
+      que coûte un <strong>doublon</strong> ?</li>
+  <li><strong>Deux hiérarchies d'erreurs</strong> : métier (4xx, non journalisées)
+      et technique (503, journalisées, détail masqué).</li>
+  <li>Jamais de <code>HTTPException</code> hors de <code>presentation/</code> ;
+      jamais de logger dans le domaine.</li>
+  <li>La <strong>composition root</strong> concentre la <strong>décision
+      d'association</strong> port ↔ adaptateur &mdash; pas la connaissance des deux
+      mondes, que l'adaptateur a forcément.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li><code>ShareTask</code> publie un message RabbitMQ <em>avant</em> le commit
+        de la transaction. Décris la séquence exacte qui aboutit à un e-mail envoyé
+        pour une tâche qui n'existe pas en base.</li>
+    <li>Une <code>EmailSendError</code> remonte jusqu'à l'API. Le client reçoit un
+        503. Est-ce le bon code si l'adresse du destinataire était simplement mal
+        formée &mdash; et où fallait-il traiter ce cas ?</li>
+    <li>On ajoute un contexte <code>project</code> avec
+        <code>ProjectNotFound(NotFoundError)</code> et
+        <code>ProjectArchived(ConflictError)</code>. Combien de lignes faut-il
+        modifier dans <code>error_handlers.py</code> ? Pourquoi ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-08">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./07-adaptateurs.html">&larr; 07. Les adaptateurs</a>
+  <a href="./09-lectures-et-query-services.html">09. Lire sans passer par le domaine &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

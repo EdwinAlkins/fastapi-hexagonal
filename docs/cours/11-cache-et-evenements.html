@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11. Cache &amp; événements &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Cache-aside avec contrat d'invalidation écrit, cache vs query service, et la distinction événement de domaine / événement d'intégration typé.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html" aria-current="page"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>11. Cache &amp; événements</h1>
+  <p class="lede">Ne pas relire ce qu'on vient de lire, et faire savoir aux autres
+  que quelque chose s'est produit.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Le <strong>cache</strong> est une décision
+  applicative, avec un contrat d'invalidation écrit, et jamais une source de
+  vérité. Les <strong>événements</strong> découplent ce qui se passe <em>après</em> :
+  un événement de domaine est émis par l'agrégat, un événement d'intégration par
+  l'application &mdash; ce ne sont pas les mêmes.
+</div>
+
+<p>Le <a href="./09-lectures-et-query-services.html">chapitre 09</a> a traité le
+chemin de lecture. Restent deux préoccupations qui l'accompagnent.</p>
+
+<h2 id="le-cache--une-décision-applicative">Le cache : une décision applicative<a class="anchor" href="#le-cache--une-décision-applicative" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le cache est une optimisation de lecture. Il n'appartient ni au domaine (aucun
+invariant n'en dépend) ni à l'infrastructure seule (c'est le use case qui décide
+quoi cacher) &mdash; d'où le port dans <code>application/shared/cache.py</code>
+(<a href="./06-application-et-ports.html#les-ports--qui-déclare-le-besoin-">ch. 06</a>).</p>
+
+<h3 id="le-patron-cache-aside">Le patron cache-aside<a class="anchor" href="#le-patron-cache-aside" aria-label="Lien vers cette section">#</a></h3>
+
+<figure class="diagram">
+<svg viewBox="0 0 660 320" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Diagramme de séquence du cache-aside. GetUser valide d'abord l'identifiant, puis interroge le cache. En cas de hit, il reconstruit le DTO depuis le dictionnaire. En cas de miss, il charge l'utilisateur depuis le repository puis écrit l'entrée dans le cache.">
+  <defs>
+    <marker id="f10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="30" y="10" width="140" height="34" rx="6"/>
+      <rect x="260" y="10" width="140" height="34" rx="6"/>
+      <rect x="480" y="10" width="160" height="34" rx="6"/>
+    </g>
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="100" y="32">GetUser</text>
+      <text x="330" y="32">CachePort</text>
+      <text x="560" y="32">UserRepository</text>
+    </g>
+
+    <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4">
+      <line x1="100" y1="46" x2="100" y2="302"/>
+      <line x1="330" y1="46" x2="330" y2="302"/>
+      <line x1="560" y1="46" x2="560" y2="302"/>
+    </g>
+
+    <rect x="50" y="128" width="580" height="168" rx="4" fill="none" stroke="var(--line)"/>
+    <rect x="50" y="128" width="46" height="18" rx="3" fill="var(--raised)" stroke="var(--line)"/>
+    <text x="73" y="141" fill="var(--muted)" font-size="10" font-weight="600" text-anchor="middle">alt</text>
+    <text x="104" y="141" fill="var(--accent)" font-size="10" font-weight="600">[hit]</text>
+    <line x1="50" y1="182" x2="630" y2="182" stroke="var(--line)" stroke-dasharray="4 4"/>
+    <text x="56" y="196" fill="var(--accent)" font-size="10" font-weight="600">[miss]</text>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f10)">
+      <path d="M 100 66 L 148 66 L 148 86 L 104 86"/>
+      <line x1="100" y1="116" x2="326" y2="116"/>
+      <line x1="100" y1="232" x2="556" y2="232"/>
+      <line x1="100" y1="284" x2="326" y2="284"/>
+    </g>
+    <g stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#f10)">
+      <line x1="330" y1="164" x2="104" y2="164"/>
+      <line x1="330" y1="206" x2="104" y2="206"/>
+      <line x1="560" y1="258" x2="104" y2="258"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="10" text-anchor="middle">
+      <text x="213" y="110">get("user:{id}")</text>
+      <text x="328" y="226">get(id)</text>
+      <text x="213" y="278">set("user:{id}", asdict(dto))</text>
+    </g>
+    <g fill="var(--muted)" font-size="10" text-anchor="middle">
+      <text x="217" y="158">dict → UserDTO</text>
+      <text x="217" y="200">None</text>
+      <text x="332" y="252">User</text>
+    </g>
+    <text x="156" y="72" fill="var(--muted)" font-size="10">UserId.from_string(raw) &#183; valide AVANT tout</text>
+  </g>
+</svg>
+</figure>
+
+<p>Et le pendant obligatoire, côté mutation :</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/user/use_cases/rename_user.py
+await self._cache.delete(f"user:{identity}")</code></pre></div>
+
+<h3 id="les-trois-règles-dun-cache-qui-ne-devient-pas-un-bug">Les trois règles d'un cache qui ne devient pas un bug<a class="anchor" href="#les-trois-règles-dun-cache-qui-ne-devient-pas-un-bug" aria-label="Lien vers cette section">#</a></h3>
+
+<ol>
+  <li><strong>Le contrat d'invalidation est écrit</strong> &mdash; ici dans le
+      docstring de <code>GetUser</code> : la clé est <code>user:{id}</code>, toute
+      mutation doit la supprimer. Un cache sans contrat documenté produit des
+      données périmées que personne ne sait expliquer.</li>
+  <li><strong>Invalider plutôt que mettre à jour.</strong> Supprimer la clé est
+      idempotent et sans risque de course ; réécrire la valeur ne l'est pas.</li>
+  <li><strong>Le cache ne doit jamais être la source de vérité.</strong> S'il est
+      vide, froid ou en panne, l'application doit fonctionner &mdash; plus
+      lentement, c'est tout.</li>
+</ol>
+
+<h3 id="cache-ou-query-service-">Cache ou query service ?<a class="anchor" href="#cache-ou-query-service-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Les deux répondent au même symptôme (« c'est lent ») par deux moyens opposés, et
+on les confond souvent :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Query service</th><th>Cache</th></tr></thead>
+  <tbody>
+    <tr><td>Ce qu'il change</td><td>La <strong>forme</strong> de la requête</td><td>Le <strong>nombre</strong> de requêtes</td></tr>
+    <tr><td>Coût</td><td>Une classe à écrire</td><td>Une cohérence à gérer</td></tr>
+    <tr><td>Risque</td><td>Aucun (c'est du SQL)</td><td>Données périmées</td></tr>
+    <tr><td>Quand</td><td>La requête est mal formée</td><td>La requête est bonne mais trop fréquente</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>L'ordre est important</strong>
+  D'abord la bonne requête, ensuite le cache. Mettre en cache une requête N+1 ne
+  fait que masquer le problème derrière un TTL &mdash; et le premier cache froid le
+  fait réapparaître, au pire moment.
+</div>
+
+<p>Une conséquence de test, souvent découverte trop tard : un cache partagé rend
+une suite non hermétique. C'est pourquoi les tests de ce projet démarrent un
+<strong>Valkey jetable</strong> et le vident entre deux tests
+(<a href="./12-organisation-et-tests.html">ch. 12</a>).</p>
+
+<h2 id="les-événements--ce-qui-se-passe-après">Les événements : ce qui se passe <em>après</em><a class="anchor" href="#les-événements--ce-qui-se-passe-après" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Une fois qu'une chose importante s'est produite, d'autres choses doivent souvent
+suivre : notifier, mettre à jour un compteur, auditer. Les glisser dans le use case
+le transforme peu à peu en fourre-tout couplé à tout le système.</p>
+
+<h3 id="événement-de-domaine-vs-événement-dintégration">Événement de domaine vs événement d'intégration<a class="anchor" href="#événement-de-domaine-vs-événement-dintégration" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Deux notions différentes, souvent confondues :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Événement de <strong>domaine</strong></th><th>Événement d'<strong>intégration</strong></th></tr></thead>
+  <tbody>
+    <tr><td>Émis par</td><td>L'agrégat lui-même</td><td>La couche application</td></tr>
+    <tr><td>Vocabulaire</td><td>Interne au contexte</td><td>Contrat public, versionné</td></tr>
+    <tr><td>Portée</td><td>Dans le processus</td><td>Vers d'autres services / contextes</td></tr>
+    <tr><td>Exemple</td><td><code>TaskCompleted</code></td><td>message <code>task.shared</code> sur RabbitMQ</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le patron pour un événement de domaine :</p>
+
+<div class="snippet" data-lang="python"><pre><code># Illustratif, hors de ce dépôt
+class Task:
+    def complete(self) -&gt; None:
+        if self.status is TaskStatus.DONE:
+            raise TaskAlreadyCompleted()
+        self.status = TaskStatus.DONE
+        self.completed_at = _now()
+        self._events.append(TaskCompleted(task_id=self.id, owner_id=self.owner_id))</code></pre></div>
+
+<p>L'entité <strong>enregistre</strong> l'événement ; elle n'envoie rien elle-même.
+Le use case collecte <code>task.pull_events()</code> après le commit et les
+dispatche. C'est ce qui permet au domaine de dire « ceci s'est produit » sans
+jamais connaître les e-mails, le broker, ni le moindre effet de bord.</p>
+
+<h3 id="ce-que-fait-ce-projet">Ce que fait ce projet<a class="anchor" href="#ce-que-fait-ce-projet" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Il n'a <strong>pas</strong> d'événements de domaine &mdash; le métier est trop
+simple pour les justifier. Il a en revanche un vrai <strong>événement
+d'intégration</strong> :</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/shared/messaging.py — le contrat
+@dataclass(frozen=True, slots=True)
+class IntegrationEvent:
+    name: ClassVar[str]            # le TYPE d'événement, pas une clé de routage
+
+@dataclass(frozen=True, slots=True)
+class ShareTaskNotification(IntegrationEvent):
+    name: ClassVar[str] = "task.shared"
+    task_id: str
+    user_ids: list[str]
+    subject: str
+    body: str
+
+# application/task/use_cases/share_task.py — l'émission
+class ShareTask:
+    async def execute(self, task_id: str, user_ids: list[str], subject: str, body: str) -&gt; None:
+        if not await self._task_repository.exists(TaskId.from_string(task_id)):
+            raise TaskNotFound(f"La tâche {task_id} n'existe pas")
+        event = ShareTaskNotification(task_id=task_id, user_ids=user_ids, ...)
+        await self._message_adapter.publish(event)     # ni sérialisation, ni routage</code></pre></div>
+
+<p>La sérialisation et le routage n'apparaissent que dans l'adaptateur :</p>
+
+<div class="snippet" data-lang="python"><pre><code># infrastructure/messaging/rabbitmq.py
+body=orjson.dumps(asdict(event)),
+routing_key=event.name,</code></pre></div>
+
+<p><code>name</code> est un <code>ClassVar</code> : il n'entre pas dans les champs
+du dataclass, donc pas dans le JSON publié. Le message sur le fil ne contient que
+les données &mdash; ce qui permet au worker de faire
+<code>ShareTaskNotification(**payload)</code> sans rien savoir du transport.</p>
+
+<p>Le use case publie sur un port ; le worker consomme et exécute
+<code>NotifyTaskShared</code>, qui envoie les e-mails. Résultat : <strong>l'API
+répond sans attendre le SMTP</strong>, et une panne du serveur de mail ne fait pas
+échouer un partage.</p>
+
+<p>Note bien où se situe la publication : dans le <strong>use case</strong>, pas
+dans le domaine. <code>Task</code> ignore qu'un partage puisse notifier qui que ce
+soit &mdash; et c'est la raison pour laquelle le domaine reste testable en
+microsecondes.</p>
+
+<div class="warn">
+  <strong>La limite déjà signalée</strong>
+  (<a href="./08-transactions-et-erreurs.html#les-limites-à-connaître">ch. 08</a>)
+  Ce message part avant le commit. Si la transaction échoue ensuite, un e-mail aura
+  été envoyé pour rien. Le pattern <strong>outbox</strong> &mdash; écrire le message
+  en base dans la même transaction, le publier ensuite depuis un relais &mdash; est
+  la réponse standard. Ne pas l'avoir est un compromis assumé à cette échelle.
+</div>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Le <strong>cache</strong> est une décision applicative : contrat
+      d'invalidation écrit, suppression plutôt que mise à jour, jamais source de
+      vérité.</li>
+  <li><strong>D'abord la bonne requête, ensuite le cache</strong> &mdash; un cache
+      posé sur un N+1 ne fait que le masquer.</li>
+  <li><strong>Événement de domaine</strong> (émis par l'agrégat, interne) ≠
+      <strong>événement d'intégration</strong> (émis par l'application, contrat
+      public).</li>
+  <li>L'entité <strong>enregistre</strong> un événement, elle ne l'envoie pas.</li>
+  <li>Publier avant le commit est un compromis : le pattern <strong>outbox</strong>
+      est la réponse quand ça devient inacceptable.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li><code>RenameUser</code> invalide <code>user:{id}</code>. Si on ajoutait un
+        endpoint « liste des users » mis en cache sous <code>users:all</code>, quel
+        bug apparaîtrait &mdash; et quelles sont les deux stratégies pour le
+        corriger ?</li>
+    <li>Une page est lente parce qu'elle déclenche 51 requêtes. Un collègue propose
+        de mettre le résultat en cache 5 minutes. Pourquoi est-ce le mauvais premier
+        geste, et que fais-tu avant ?</li>
+    <li>Le worker échoue à envoyer un e-mail sur 3 destinataires. Où va
+        l'information d'échec, et pourquoi le message principal est-il quand même
+        acquitté ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-11">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./10-ecritures-en-masse.html">&larr; 10. Écrire en masse</a>
+  <a href="./12-organisation-et-tests.html">12. Organisation &amp; tests &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

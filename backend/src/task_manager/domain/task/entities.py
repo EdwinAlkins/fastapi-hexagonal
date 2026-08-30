@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from task_manager.domain.task.exceptions import TaskAlreadyCompleted
+from task_manager.domain.task.exceptions import InconsistentTaskState, TaskAlreadyCompleted
 from task_manager.domain.task.value_objects import TaskId, TaskStatus, TaskTitle
 from task_manager.domain.user.value_objects import UserId
 
@@ -51,6 +51,57 @@ class Task:
             status=TaskStatus.TODO,
             created_at=_now(),
             completed_at=None,
+        )
+
+    @classmethod
+    def reconstitute(
+        cls,
+        *,
+        id: TaskId,
+        owner_id: UserId,
+        title: TaskTitle,
+        description: str | None,
+        status: TaskStatus,
+        created_at: datetime,
+        completed_at: datetime | None,
+    ) -> Task:
+        """Reconstruit une tâche **qui existe déjà**, dans l'état où elle était.
+
+        À ne pas confondre avec :meth:`create`, et la distinction n'est pas
+        cosmétique :
+
+        - ``create`` répond à « **cet état est-il atteignable ?** » : elle impose un
+          identifiant neuf, le statut ``TODO`` et l'instant présent. Elle ne sait
+          donc pas représenter une tâche importée qui serait déjà terminée.
+        - ``reconstitute`` répond à « **cet état est-il valide ?** » : elle accepte
+          n'importe quel état de la machine, à condition qu'il soit cohérent.
+
+        C'est la porte des imports et des restaurations. Les invariants de champ
+        restent assurés par les value objects (un titre vide est refusé ici comme
+        ailleurs) ; ce qui n'est pas rejoué, ce sont les règles de **transition**,
+        qui portent sur des changements d'état et n'ont pas de sens sur un état au
+        repos.
+
+        Cette méthode est délibérément plus stricte que ``mappers.to_domain`` :
+        celui-ci relit *notre* base, dont nous sommes la source de vérité, alors
+        qu'un import relit un fichier dont nous ne garantissons rien.
+        """
+        if status is TaskStatus.DONE and completed_at is None:
+            raise InconsistentTaskState("une tâche terminée doit porter une date de complétion")
+        if status is not TaskStatus.DONE and completed_at is not None:
+            raise InconsistentTaskState(
+                "une tâche non terminée ne peut pas porter de date de complétion"
+            )
+        if completed_at is not None and completed_at < created_at:
+            raise InconsistentTaskState("la complétion précède la création")
+        return cls(
+            id=id,
+            owner_id=owner_id,
+            title=title,
+            description=description,
+            status=status,
+            created_at=created_at,
+            completed_at=completed_at,
         )
 
     def start(self) -> None:

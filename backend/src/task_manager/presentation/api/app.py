@@ -24,7 +24,7 @@ from task_manager.infrastructure.persistence.database import (
 from task_manager.presentation.api.dependencies import CachePortDep, SessionDep
 from task_manager.presentation.api.error_handlers import register_error_handlers
 from task_manager.presentation.api.middleware import register_request_logging
-from task_manager.presentation.api.v1.routers import tasks, users
+from task_manager.presentation.api.v1.routers import exports, tasks, users
 
 logger = logging.getLogger("task_manager")
 
@@ -95,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_request_logging(app)
     app.include_router(users.router, prefix="/api/v1")
     app.include_router(tasks.router, prefix="/api/v1")
+    app.include_router(exports.router, prefix="/api/v1")
 
     @app.get("/health", tags=["health"])
     async def liveness() -> dict[str, str]:

@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14. Annexes &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Le tableau principe vs choix de ce projet, le glossaire complet, et les corrigés argumentés des exercices des treize chapitres.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html" aria-current="page"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>14. Annexes</h1>
+  <p class="lede">Le tableau à garder sous la main, le glossaire, et les corrigés.</p>
+</header>
+
+<ul>
+  <li><a href="#a-principe-vs-choix-de-ce-projet">A. Principe vs choix de ce projet</a></li>
+  <li><a href="#b-glossaire">B. Glossaire</a></li>
+  <li><a href="#c-corrigés-des-exercices">C. Corrigés des exercices</a></li>
+</ul>
+
+<h2 id="a-principe-vs-choix-de-ce-projet">A. Principe vs choix de ce projet<a class="anchor" href="#a-principe-vs-choix-de-ce-projet" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le tableau le plus important du cours. La colonne du milieu est
+<strong>transférable partout</strong> ; celle de droite est <strong>un</strong>
+choix valide dans <strong>ce</strong> contexte. Les confondre est la première cause
+de dogmatisme.</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th><th>Autres options courantes</th></tr></thead>
+  <tbody>
+    <tr><td>Bounded contexts</td><td>Frontières où un modèle et son langage restent cohérents</td><td><code>task</code> et <code>user</code>, couplés par le seul <code>UserId</code></td><td>Contexte unique, services séparés + ACL</td></tr>
+    <tr><td>Règle de dépendance</td><td>Les dépendances pointent vers l'intérieur</td><td>4 couches, vérifiées par import-linter</td><td>2 zones (dedans/dehors), ArchUnit, tests d'archi maison</td></tr>
+    <tr><td>Value object</td><td>Pas d'identité, égalité par valeur</td><td><code>dataclass(frozen=True, slots=True)</code>, auto-validé, normalisé</td><td><code>NamedTuple</code>, <code>attrs</code>, classe classique</td></tr>
+    <tr><td>Identité</td><td>Générée par le domaine, opaque</td><td><code>UUIDv7</code> via <code>uuid.uuid7()</code></td><td>UUIDv4, ULID, séquence base (couplage)</td></tr>
+    <tr><td>Entité</td><td>Identité stable, égalité par id</td><td>Attributs publics, mutation par méthodes</td><td>Attributs <code>_privés</code> + <code>@property</code></td></tr>
+    <tr><td>Agrégat</td><td>Frontière de cohérence transactionnelle</td><td><code>Task</code> et <code>User</code> séparés, référence par <code>UserId</code></td><td>Agrégats plus gros si un invariant le justifie</td></tr>
+    <tr><td>Portée transactionnelle</td><td>1 transaction = 1 agrégat (prépare la distribution)</td><td>1 transaction = 1 use case</td><td>Saga / outbox si multi-service</td></tr>
+    <tr><td>Port de persistance</td><td>Appartient à qui exprime le besoin</td><td><code>domain/&lt;ctx&gt;/repository.py</code></td><td>Port en <code>application/</code> si le modèle n'en dépend pas</td></tr>
+    <tr><td>Ports techniques</td><td>Idem</td><td><code>application/shared/</code> (cache, SMTP, broker)</td><td><code>domain/</code> (à éviter), ou pas de port du tout</td></tr>
+    <tr><td>Frontière transactionnelle</td><td>Entoure l'unité de travail</td><td>Fournie par chaque adaptateur entrant</td><td>Unit of Work explicite, décorateur <code>@transactional</code></td></tr>
+    <tr><td>Repository</td><td>Abstraction de la persistance des agrégats</td><td>Interface domaine + impl. SQLAlchemy, <strong>sans commit</strong></td><td>Repository qui gère sa transaction (autre modèle)</td></tr>
+    <tr><td>ORM</td><td>Détail d'infrastructure</td><td>Modèle ORM séparé + mapper</td><td>Active Record (couple le domaine), ORM sur l'entité</td></tr>
+    <tr><td>DTO</td><td>Séparer les frontières</td><td><code>dataclass(frozen=True, slots=True)</code></td><td>Pydantic (fait entrer le framework), <code>TypedDict</code></td></tr>
+    <tr><td>Erreurs</td><td>Métier ≠ technique</td><td><code>DomainError</code> (4xx) / <code>InfrastructureError</code> (503)</td><td><code>Result</code>/<code>Either</code> plutôt que des exceptions</td></tr>
+    <tr><td>Écritures en masse</td><td>Passent par les agrégats, comme toute écriture</td><td><code>Task.reconstitute</code> + un <strong>bulk writer</strong> par contexte ; commit par lot via <code>UnitOfWorkPort</code></td><td><code>COPY</code> vers une table de transit</td></tr>
+    <tr><td>Lectures</td><td>Peuvent contourner les agrégats</td><td>Agrégats pour les listes simples ; un <strong>query service</strong> (<code>TaskQueryPort</code>) pour l'export joint tâche+propriétaire</td><td>CQRS léger, CQRS complet, Event Sourcing</td></tr>
+    <tr><td>Événements</td><td>Découplent ce qui se passe <em>après</em></td><td>Événement d'<strong>intégration</strong> typé (<code>IntegrationEvent</code>) publié depuis le use case</td><td>Événements de <strong>domaine</strong> émis par l'agrégat</td></tr>
+    <tr><td>Cache</td><td>Optimisation, jamais source de vérité</td><td>Cache-aside, clé <code>user:{id}</code>, invalidation à la mutation</td><td>Write-through, TTL seul, pas de cache</td></tr>
+    <tr><td>Composition root</td><td>La décision d'association port ↔ adaptateur reste en un point unique</td><td><code>presentation/api/dependencies/</code> + câblage manuel CLI/worker</td><td>Package <code>bootstrap/</code>, conteneur DI dédié</td></tr>
+    <tr><td>Tests</td><td>Le domaine doit se tester sans I/O</td><td>3 niveaux : domaine / use cases (fakes) / intégration réelle</td><td>Mocks génériques, SQLite in-memory (déconseillé)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="b-glossaire">B. Glossaire<a class="anchor" href="#b-glossaire" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Terme</th><th>Définition</th><th>Chapitre</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Adaptateur</strong></td><td>Implémentation concrète d'un port, ou point d'entrée qui pilote l'application.</td><td><a href="./01-regle-de-dependance.html">01</a></td></tr>
+    <tr><td><strong>Agrégat</strong></td><td>Groupe d'objets formant une frontière de cohérence transactionnelle.</td><td><a href="./04-les-agregats.html">04</a></td></tr>
+    <tr><td><strong>Aggregate root</strong></td><td>Racine d'un agrégat : seule porte d'entrée, garante des invariants.</td><td><a href="./04-les-agregats.html">04</a></td></tr>
+    <tr><td><strong>Always-valid model</strong></td><td>Principe selon lequel un objet qui existe est nécessairement valide.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Anti-corruption layer (ACL)</strong></td><td>Couche de traduction qui empêche le modèle d'un autre contexte de contaminer le tien.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Bounded context</strong></td><td>Frontière à l'intérieur de laquelle un modèle et son langage restent cohérents.</td><td><a href="./03-le-domaine.html">03</a>, <a href="./12-organisation-et-tests.html">12</a></td></tr>
+    <tr><td><strong>Bulk writer</strong></td><td>Port d'écriture groupée : reçoit des agrégats déjà validés et n'optimise que leur transport vers la base.</td><td><a href="./10-ecritures-en-masse.html">10</a></td></tr>
+    <tr><td><strong>Composition root</strong></td><td>Point unique où se décide l'association port ↔ adaptateur.</td><td><a href="./08-transactions-et-erreurs.html">08</a></td></tr>
+    <tr><td><strong>Context map</strong></td><td>Description des relations entre bounded contexts (shared kernel, conformist, ACL…).</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>CQRS</strong></td><td><em>Command Query Responsibility Segregation</em> : modèles de lecture et d'écriture séparés.</td><td><a href="./09-lectures-et-query-services.html">09</a></td></tr>
+    <tr><td><strong>DTO</strong></td><td><em>Data Transfer Object</em> : structure neutre transportant des données entre couches.</td><td><a href="./06-application-et-ports.html">06</a></td></tr>
+    <tr><td><strong>Dual write</strong></td><td>Une opération qui écrit dans deux systèmes sans transaction commune ; aucun ordre n'est sûr.</td><td><a href="./08-transactions-et-erreurs.html">08</a></td></tr>
+    <tr><td><strong>Driving / driven</strong></td><td>Adaptateur qui pilote l'application (API, CLI, worker) / qui est piloté par elle (BDD, cache, SMTP).</td><td><a href="./01-regle-de-dependance.html">01</a></td></tr>
+    <tr><td><strong>Entité</strong></td><td>Objet métier à identité stable dans le temps ; égalité par identifiant.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Événement de domaine</strong></td><td>Fait métier enregistré par un agrégat (<code>TaskCompleted</code>), interne au contexte.</td><td><a href="./11-cache-et-evenements.html">11</a></td></tr>
+    <tr><td><strong>Événement d'intégration</strong></td><td>Message publié vers l'extérieur, contrat public versionné.</td><td><a href="./11-cache-et-evenements.html">11</a></td></tr>
+    <tr><td><strong>Factory</strong></td><td>Point de construction d'un objet neuf dans un état initial cohérent (<code>Task.create</code>).</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Invariant</strong></td><td>Propriété qui doit rester vraie à tout instant de la vie d'un objet.</td><td><a href="./02-ou-vit-une-regle.html">02</a>, <a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Idempotence</strong></td><td>Propriété du <em>traitement</em> : le rejouer produit le même état qu'un seul passage. Obtenue à l'import par <code>ON CONFLICT DO NOTHING</code> sur des identités venues du fichier.</td><td><a href="./08-transactions-et-erreurs.html">08</a> · <a href="./10-ecritures-en-masse.html">10</a></td></tr>
+    <tr><td><strong>Inversion de dépendance</strong></td><td>Celui qui exprime le besoin possède l'interface ; l'implémentation lui obéit.</td><td><a href="./01-regle-de-dependance.html">01</a></td></tr>
+    <tr><td><strong>Langage ubiquitaire</strong></td><td>Vocabulaire partagé entre métier et code, utilisé littéralement dans le code.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Mapper</strong></td><td>Traducteur entité ↔ modèle de persistance ; seul à connaître les deux formes.</td><td><a href="./07-adaptateurs.html">07</a></td></tr>
+    <tr><td><strong>Modèle anémique</strong></td><td>Objets sans comportement, logique reportée à l'extérieur &mdash; l'anti-pattern.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Reconstitution</strong></td><td>Reconstruction d'une entité <strong>existante</strong> dans son état, par opposition à sa création. Valide l'état, pas son atteignabilité.</td><td><a href="./10-ecritures-en-masse.html">10</a></td></tr>
+    <tr><td><strong>N+1</strong></td><td>Une requête par élément d'une liste, faute de chargement explicite.</td><td><a href="./05-relations-entre-agregats.html">05</a></td></tr>
+    <tr><td><strong>Outbox</strong></td><td>Écrire le message à publier dans la même transaction que la donnée, puis le relayer ; garantit l'<em>at-least-once</em>.</td><td><a href="./08-transactions-et-erreurs.html">08</a>, <a href="./11-cache-et-evenements.html">11</a></td></tr>
+    <tr><td><strong>Policy applicative</strong></td><td>Règle propre à un cas d'usage (quota, plafond, pagination), non invariant du domaine.</td><td><a href="./02-ou-vit-une-regle.html">02</a></td></tr>
+    <tr><td><strong>Port</strong></td><td>Interface exprimant un besoin, déclarée par la couche qui l'exprime.</td><td><a href="./06-application-et-ports.html">06</a></td></tr>
+    <tr><td><strong>Query service</strong></td><td>Composant de lecture seule qui court-circuite les agrégats et renvoie des DTO à plat.</td><td><a href="./09-lectures-et-query-services.html">09</a></td></tr>
+    <tr><td><strong>Réification</strong></td><td>Transformer une relation porteuse de données en concept métier à part entière (<code>Enrollment</code>).</td><td><a href="./05-relations-entre-agregats.html">05</a></td></tr>
+    <tr><td><strong>Repository</strong></td><td>Port d'accès à la persistance d'un agrégat, exprimé en termes du domaine.</td><td><a href="./06-application-et-ports.html">06</a></td></tr>
+    <tr><td><strong>Saga</strong></td><td>Suite d'étapes locales avec une compensation par étape, quand aucune transaction commune n'existe.</td><td><a href="./08-transactions-et-erreurs.html">08</a></td></tr>
+    <tr><td><strong>Service de domaine</strong></td><td>Décision métier sans propriétaire naturel ; sans état, et sans I/O dans cette architecture.</td><td><a href="./02-ou-vit-une-regle.html">02</a></td></tr>
+    <tr><td><strong>Shared kernel</strong></td><td>Petit noyau de modèle partagé par deux contextes, modifié d'un commun accord.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+    <tr><td><strong>Unit of Work</strong></td><td>Regroupement des modifications validées d'un bloc. Réduit ici à un port exposant le seul <strong>point d'acquisition</strong> (<code>commit</code>), demandé explicitement par un use case long.</td><td><a href="./08-transactions-et-erreurs.html">08</a> · <a href="./10-ecritures-en-masse.html">10</a></td></tr>
+    <tr><td><strong>Use case</strong></td><td>Une action applicative, orchestrant le domaine via des ports.</td><td><a href="./06-application-et-ports.html">06</a></td></tr>
+    <tr><td><strong>Value object</strong></td><td>Objet sans identité propre, défini par sa valeur.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="c-corrigés-des-exercices">C. Corrigés des exercices<a class="anchor" href="#c-corrigés-des-exercices" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Ce ne sont pas des réponses uniques : plusieurs sont défendables. Ce qui compte
+est le <strong>critère</strong> utilisé pour trancher.</p>
+
+<h3 id="chapitre-00">Chapitre 00<a class="anchor" href="#chapitre-00" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> Le CLI (<code>task-manager-cli</code>) et le worker RabbitMQ
+(<code>NotifyTaskShared</code> charge et manipule des tâches). Aucun ne passe par un
+router FastAPI : une validation écrite dans le handler HTTP ne les protège pas.
+C'est la définition même d'une règle sans domicile.</p>
+
+<p><strong>2.</strong> Le <code>commit</code> dans le handler valide la création
+<strong>avant</strong> que le débit de quota n'ait lieu. Si le débit échoue ensuite,
+la tâche existe et le quota est faux : les deux écritures ne sont plus atomiques.
+C'est exactement pourquoi la frontière transactionnelle doit entourer le use case
+entier (<a href="./08-transactions-et-erreurs.html">ch. 08</a>).</p>
+
+<h3 id="chapitre-01">Chapitre 01<a class="anchor" href="#chapitre-01" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> Ce n'est pas une violation. La règle interdit au domaine de
+dépendre de <strong>frameworks d'infrastructure</strong> (web, ORM, sérialisation)
+&mdash; le contrat <code>forbidden</code> de <code>pyproject.toml</code> liste
+précisément <code>fastapi</code>, <code>sqlalchemy</code>, <code>pydantic</code>,
+<code>pydantic_settings</code>, <code>starlette</code>. <code>email_validator</code>
+est une bibliothèque de règles <strong>métier</strong> (la forme d'un e-mail), sans
+I/O ici puisque <code>check_deliverability=False</code>. La bonne question n'est pas
+« est-ce une dépendance externe ? » mais « cette dépendance apporte-t-elle de la
+technique dans le cœur ? ». Une dépendance pure et stable qui exprime une règle du
+métier est acceptable.</p>
+
+<p><strong>2.</strong> Le contrat <code>layers</code> : <code>application</code> se
+mettrait à importer <code>infrastructure</code>, qui est au-dessus d'elle dans
+l'empilement. Ce qu'on perd concrètement : impossible de tester un use case sans
+tirer SQLAlchemy, et surtout la <strong>direction de l'autorité</strong> s'inverse
+&mdash; l'infrastructure dicterait la forme de l'interface au lieu de la subir. Le
+jour où on veut un adaptateur non-SQL, c'est le domaine qu'il faut renégocier.</p>
+
+<h3 id="chapitre-02">Chapitre 02<a class="anchor" href="#chapitre-02" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.a.</strong> Dans le <strong>use case</strong>
+(<code>CreateTask</code>) : c'est une règle inter-agrégats, donc de coordination.</p>
+
+<p><strong>b.</strong> <code>User</code> ne peut pas la porter : il faudrait compter
+les tâches, donc interroger <code>TaskRepository</code> &mdash; une I/O, interdite
+dans une entité &mdash; et le contexte <code>user</code> n'a de toute façon pas à
+connaître le contexte <code>task</code>. Faire porter la règle par <code>Task</code>
+ne marche pas davantage : une tâche ne connaît pas ses sœurs.</p>
+
+<p><strong>c.</strong> Les deux requêtes lisent le compteur à 49, concluent toutes
+les deux que c'est bon, et insèrent : on se retrouve à 51. C'est le classique
+<em>check-then-act</em> sous concurrence &mdash; la vérification et l'écriture ne
+sont pas atomiques. La fenêtre est petite mais réelle, et elle s'élargit avec la
+latence.</p>
+
+<p><strong>d.</strong> Plusieurs options, par ordre de coût croissant :</p>
+<ul>
+  <li>un <strong>verrou pessimiste</strong> sur la ligne du user pendant la
+      transaction (<code>SELECT … FOR UPDATE</code>), qui sérialise les créations
+      d'un même propriétaire ;</li>
+  <li>un <strong>compteur dénormalisé</strong> dans <code>users</code> avec une
+      contrainte <code>CHECK (in_progress_count &lt;= 50)</code>, incrémenté dans la
+      même transaction &mdash; la base refuse alors structurellement le 51ᵉ ;</li>
+  <li>un <strong>index partiel unique</strong> sur un numéro de slot, si le métier
+      s'y prête.</li>
+</ul>
+<p>Le schéma général est identique à l'unicité d'e-mail : le use case produit le
+<strong>message métier</strong> lisible, la base produit la <strong>garantie</strong>.
+Une vérification applicative sans garantie en base est un bug de concurrence en
+attente ; une contrainte en base sans vérification applicative donne une erreur
+illisible. Il faut les deux.</p>
+
+<p><strong>2.</strong> Dans <code>TaskTitle</code> (<code>TITLE_MAX_LENGTH</code>,
+avec <code>TitleTooLong</code>) et dans le schéma HTTP
+(<code>Field(max_length=TITLE_MAX_LENGTH)</code>) &mdash; plus, en base, le
+<code>String(200)</code> de <code>TaskModel</code>. Ce n'est pas une duplication
+fautive : ce sont trois garde-fous à trois altitudes
+(<a href="./07-adaptateurs.html#deux-validations-deux-rôles-ne-pas-confondre">ch. 07</a>).
+Le signe que c'est sain : la <strong>constante est partagée</strong>, pas recopiée.
+Le jour où elle change, un seul endroit bouge (plus une migration).</p>
+
+<p><strong>3.</strong> Discutable, et c'est l'intérêt de la question. Le
+plafonnement est une <strong>policy applicative</strong> : il protège le service, il
+n'est pas constitutif de ce qu'est une tâche. Il vit donc dans le port et le use
+case (<code>limit=100</code> par défaut, borné). La <em>valeur par défaut</em>
+affichée dans l'API peut, elle, être une décision de présentation. Ce qu'il ne faut
+surtout pas, c'est laisser la présentation passer un <code>limit</code> non borné
+jusqu'à la base.</p>
+
+<h3 id="chapitre-03">Chapitre 03<a class="anchor" href="#chapitre-03" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> <code>dataclass</code> génère <code>__eq__</code> par valeur
+automatiquement &mdash; c'est exactement le comportement voulu pour un value object.
+<code>Task</code>, elle, <strong>redéfinit</strong> <code>__eq__</code> pour comparer
+par identité, parce que deux tâches de même titre ne sont pas la même tâche. C'est
+la différence entité/VO rendue exécutable. (Et pour <code>Money</code>, l'addition
+de deux devises différentes doit lever une exception métier, pas convertir : le taux
+de change est un fait du monde extérieur, donc pas dans un VO.)</p>
+
+<p><strong>2.</strong> (a) Les tests deviennent dépendants du réseau et du DNS :
+lents, et rouges au hasard en CI ou hors ligne. (b) Ils cessent d'être déterministes
+&mdash; un domaine valide aujourd'hui peut devenir invalide demain sans qu'une ligne
+de code n'ait changé. Plus grave : la classe <code>Email</code> n'est plus testable
+en isolation, ce qui est précisément le signal du
+<a href="./12-organisation-et-tests.html">chapitre 12</a> qu'une règle a été mélangée
+à de la technique.</p>
+
+<p><strong>3.</strong> La garde irait dans <code>Task.rename()</code>, à côté de
+celle de <code>complete()</code> : c'est un invariant d'état d'un seul objet.
+<strong>Surtout pas</strong> dans le use case <code>RenameTask</code> (elle serait
+contournable par le CLI ou le worker) ni dans le schéma HTTP (qui ne connaît pas
+l'état actuel de la tâche).</p>
+
+<h3 id="chapitre-04">Chapitre 04<a class="anchor" href="#chapitre-04" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.a.</strong> Deux agrégats, dans la quasi-totalité des cas. Invariant
+traversant ? Aucun en général (« pas plus de N commentaires » est rare, et c'est
+plutôt une policy de modération). Cycle de vie ? Les commentaires arrivent bien
+après la publication, et peuvent être supprimés sans elle. Taille ? Non bornée.
+Contention ? Deux commentaires simultanés se bloqueraient si l'article était la
+racine.</p>
+
+<p><strong>b.</strong> Le critère décisif est la <strong>taille non bornée</strong> :
+c'est le seul des quatre qui rend l'agrégat unique carrément impraticable, et pas
+seulement discutable.</p>
+
+<p><strong>c.</strong> Un article de type « tribune » limité à 3 réponses
+éditoriales, validées avant publication et publiées avec elle. Là, l'invariant
+existe vraiment (« au plus 3, et toutes validées »), le cycle de vie est commun, la
+taille est bornée : l'agrégat unique devient le bon choix. Même modèle de données,
+conclusion inverse &mdash; parce que le métier a changé, pas le schéma.</p>
+
+<p><strong>d.</strong> En choisissant deux agrégats, on accepte que le compteur de
+commentaires affiché sur l'article soit une <strong>lecture séparée</strong> (requête
+ou compteur dénormalisé), et donc potentiellement décalé d'un instant. C'est le
+compromis normal : on échange une cohérence immédiate dont personne n'a besoin contre
+une scalabilité dont tout le monde a besoin.</p>
+
+<p><strong>2.</strong> Deux agrégats. Le cas devient franc avec un prestataire
+externe : le paiement a son propre cycle de vie, ses propres états (autorisé,
+capturé, remboursé), et il <strong>ne peut pas</strong> être cohérent avec la
+commande dans la même transaction &mdash; il arrive trois jours plus tard, par
+webhook. C'est le cas d'école de la cohérence à terme : la commande passe en
+<code>PAID</code> en réaction à un événement, pas dans la transaction qui l'a créée.</p>
+
+<p><strong>3.</strong> Il faudrait un invariant du type « un user ne peut pas être
+supprimé s'il a des tâches en cours » <strong>vérifié transactionnellement</strong>,
+ou « la somme des estimations de ses tâches ne dépasse pas son quota hebdomadaire ».
+Le second est crédible dans un outil de gestion de charge. Mais même là, un agrégat
+unique est un mauvais choix à cause du volume : la réponse habituelle est de
+maintenir un compteur dénormalisé dans <code>User</code>, mis à jour dans la même
+transaction &mdash; ce qui est un compromis, pas une frontière d'agrégat.</p>
+
+<h3 id="chapitre-05">Chapitre 05<a class="anchor" href="#chapitre-05" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> <code>count_completed_by_owner</code> sur le port, ou un query
+service. Le critère est le <strong>volume transféré</strong> :
+<code>list_by_owner</code> puis compte en Python charge N agrégats complets pour
+produire un entier &mdash; inacceptable dès quelques centaines de tâches. Entre les
+deux options restantes : une méthode de port si le compte reste dans le contexte
+<code>task</code> et sert aussi à des décisions ; un query service dès qu'on combine
+nom du user <strong>et</strong> compteur en un seul écran, puisqu'on traverse alors
+deux contextes en lecture.</p>
+
+<p><strong>2.</strong> (a) Charger un user tirerait toutes ses tâches &mdash; non
+borné. (b) Le contexte <code>user</code> dépendrait du contexte <code>task</code>, ce
+qu'aucune règle métier ne justifie. (c) En SQLAlchemy async, l'accès paresseux
+lèverait une erreur à l'exécution, ou imposerait un <code>selectinload</code> partout
+« au cas où ». Et un quatrième, plus insidieux : le mapper <code>to_domain</code> de
+<code>user</code> devrait décider s'il charge les tâches ou non, et une entité à
+moitié chargée est une bombe à retardement.</p>
+
+<p><strong>3.</strong> Parce qu'elle a une <strong>identité propre et un cycle de
+vie</strong> : on modifie une inscription (attribuer une note), on l'annule, on
+l'historise. Deux inscriptions avec les mêmes valeurs à un instant donné ne sont pas
+interchangeables. Et <code>assign_grade</code> porte un invariant &mdash; un value
+object n'a pas d'invariant de transition, il n'a pas de transitions du tout.</p>
+
+<h3 id="chapitre-06">Chapitre 06<a class="anchor" href="#chapitre-06" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.a.</strong> Dans <code>application/shared/</code> &mdash; c'est déjà
+<code>SMTPSenderPort</code>.</p>
+
+<p><strong>b.</strong> Pas dans <code>domain/user/</code> parce qu'aucun invariant de
+<code>User</code> ne dépend de l'envoi d'un e-mail : un user existe et est valide que
+le mail parte ou non.</p>
+
+<p><strong>c.</strong> Non, la création ne doit pas être annulée &mdash; et c'est
+précisément ce qui prouve le placement. Si la réponse avait été « oui, un user sans
+mail de bienvenue est un état invalide », l'envoi ferait partie de la cohérence de
+l'agrégat, et il faudrait le traiter tout autrement (transaction, compensation). Ce
+test remplace avantageusement l'intuition : <strong>si l'échec de l'effet n'invalide
+pas l'agrégat, c'est un effet applicatif.</strong></p>
+
+<p><strong>d.</strong> Passer par le broker plutôt que par un appel SMTP synchrone :
+le use case publie un événement (<code>user.created</code>), un worker envoie le mail
+&mdash; exactement le schéma de <code>ShareTask</code> /
+<code>NotifyTaskShared</code> (<a href="./11-cache-et-evenements.html">ch. 11</a>).
+L'API répond sans attendre le serveur de mail, et une panne SMTP ne fait plus échouer
+une création. Le compromis à connaître : le message part avant le commit, donc un mail
+peut être envoyé pour un user qui n'existera jamais &mdash; c'est ce que résout un
+<em>outbox</em>.</p>
+
+<p><strong>2.</strong> <code>ping</code> est un cas limite parce qu'il ne sert à
+<strong>aucun</strong> use case métier : c'est un besoin d'exploitation (health
+check). Il fait donc entrer une préoccupation d'observabilité dans un port
+applicatif. Ce qui le justifie : la seule alternative serait que l'endpoint de santé
+accède directement à l'adaptateur Redis, ce qui ferait dépendre la présentation d'un
+détail d'infrastructure &mdash; un couplage pire pour un bénéfice moindre. Choisir le
+moindre mal en le sachant est une décision d'architecture ; le faire sans s'en rendre
+compte n'en est pas une.</p>
+
+<p><strong>3.</strong> Le contrat <code>layers</code> : <code>application</code>
+importerait <code>presentation</code>, soit deux couches au-dessus. Et concrètement,
+le CLI et le worker devraient construire des objets Pydantic de l'API HTTP pour
+appeler un use case &mdash; ce qui rendrait le métier dépendant d'un canal qu'ils
+n'utilisent pas. La « duplication » entre <code>CreateTaskRequest</code> et
+<code>CreateTaskCommand</code> est apparente : les deux objets ont des raisons de
+changer différentes (le contrat public de l'API vs. l'entrée du cas d'usage).</p>
+
+<h3 id="chapitre-07">Chapitre 07<a class="anchor" href="#chapitre-07" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> <code>TaskTitle("")</code> lève <code>EmptyTitle</code>, donc
+la lecture échoue avec une erreur métier. Ce n'est <strong>pas</strong> un bug du
+mapper : c'est le système qui signale que la base contient un état que le domaine
+considère comme impossible. C'est même une propriété désirable &mdash; la barrière de
+validation joue aussi en relecture. Le vrai bug est en amont : une donnée insérée en
+contournant le domaine. La parade structurelle est une contrainte <code>CHECK</code>
+en base, qui interdit l'insertion fautive.</p>
+
+<p><strong>2.</strong> Seulement <code>presentation/</code> : le schéma de réponse et
+le router (ou un <code>Response</code> personnalisé). <strong>Zéro ligne</strong> dans
+<code>domain/</code> et <code>application/</code> &mdash; le use case renvoie déjà un
+DTO neutre. C'est la démonstration la plus courte de ce que cette architecture
+achète.</p>
+
+<p><strong>3.</strong> Dans le worker, <code>process_message</code> traite un message
+puis, en cas d'échec SMTP partiel, publie vers la DLQ avant que la session ne commit.
+Si <code>save()</code> committait de son côté, une exception survenant
+<strong>après</strong> ce commit mais avant la fin du traitement laisserait la base
+modifiée alors que le message est rejeté et rejoué : le rollback du wrapper n'aurait
+plus rien à annuler. On obtiendrait des effets partiels rejoués &mdash; le pire des
+deux mondes.</p>
+
+<h3 id="chapitre-08">Chapitre 08<a class="anchor" href="#chapitre-08" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> <code>ShareTask</code> vérifie l'existence de la tâche, publie
+sur RabbitMQ, puis rend la main. La dépendance de session commit
+<strong>ensuite</strong>. Si le commit échoue (conflit, connexion perdue, panne
+PgBouncer), la transaction est annulée &mdash; mais le message est déjà dans le
+broker. Le worker le consomme, charge la tâche… qui n'existe pas, ou existe dans un
+état antérieur. Le pattern outbox supprime cette fenêtre en rendant la publication
+elle-même transactionnelle.</p>
+
+<p><strong>2.</strong> Non, 503 est trompeur : une adresse mal formée est une erreur
+du client, pas une panne de dépendance. Le bon traitement est en amont &mdash;
+<code>Email</code> est un value object qui rejette la forme invalide à la
+construction, donc l'adresse n'aurait jamais dû atteindre l'adaptateur SMTP. C'est une
+illustration du principe <em>always-valid</em> : quand une erreur technique révèle une
+donnée invalide, la correction se fait à la barrière de validation, pas dans le
+handler d'erreur.</p>
+
+<p><strong>3.</strong> <strong>Zéro.</strong> Les deux exceptions héritent de bases
+déjà enregistrées, et FastAPI remonte la hiérarchie de classes pour trouver le
+handler. C'est tout l'intérêt de mapper les <strong>bases sémantiques</strong> plutôt
+que les exceptions concrètes : le coût d'ajout d'un contexte reste constant.</p>
+
+<h3 id="chapitre-09">Chapitre 09<a class="anchor" href="#chapitre-09" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.a.</strong> Quelque chose comme :</p>
+
+<div class="snippet" data-lang="python"><pre><code>@dataclass(frozen=True, slots=True)
+class MyTaskListItem:
+    task_id: str
+    title: str
+    status: str
+    owner_name: str
+
+class TaskQueryPort(ABC):
+    async def recent_with_owner(self, owner_id: str, *, limit: int = 20) -&gt; list[MyTaskListItem]: ...
+    async def count_by_owner(self, owner_id: str) -&gt; int: ...</code></pre></div>
+
+<p>Le dépôt contient la version non filtrée de ce port &mdash;
+<code>application/task/queries.py</code> &mdash; qui sert l'export global : même
+DTO plat, même absence de use case, mais un <code>AsyncIterator</code> plutôt
+qu'une <code>list</code>, parce que l'export n'est pas borné par un
+<code>limit</code>.</p>
+
+<p><strong>b.</strong> <strong>Deux</strong> requêtes : un
+<code>SELECT … JOIN … LIMIT 20</code> et un <code>COUNT(*)</code>. On pourrait
+descendre à une seule avec une fonction de fenêtrage (<code>COUNT(*) OVER ()</code>),
+mais deux requêtes simples valent souvent mieux qu'une requête astucieuse &mdash;
+surtout si le compteur est mis en cache plus tard.</p>
+
+<p><strong>c.</strong> Pas dans <code>TaskRepository</code> parce qu'un repository est
+le port de persistance d'un <strong>agrégat</strong> : il parle en <code>Task</code>,
+en entités complètes, et sert les écritures. Y ajouter des projections jointes le
+transformerait progressivement en couche d'accès aux données générique &mdash; et
+ferait entrer <code>UserModel</code> dans les préoccupations du contexte
+<code>task</code>.</p>
+
+<p><strong>2.</strong> Deux raisons. <strong>(a) Ça ne réutilise rien d'utile</strong> :
+le mapper construit des value objects (<code>TaskTitle</code>, <code>TaskId</code>) à
+partir de colonnes déjà validées, et la vue a besoin de <code>str</code>. On paierait
+la reconstruction complète du modèle métier pour la défaire aussitôt.
+<strong>(b) Ça rouvre la porte qu'on vient de fermer</strong> : une entité renvoyée
+par une lecture finit toujours par être passée à un use case d'écriture « puisqu'on
+l'a déjà sous la main » &mdash; et là, elle est incomplète ou périmée. Un DTO plat ne
+peut pas être confondu avec un agrégat.</p>
+
+<p><strong>3.</strong> On perdrait la distinction entre <em>404 « user inconnu »</em>
+et <em>200 avec liste vide</em> : une seule requête filtrée sur <code>owner_id</code>
+renvoie <code>[]</code> dans les deux cas, et l'appelant ne peut plus savoir s'il
+s'est trompé d'identifiant. Un query service rend les deux en une requête, par exemple
+avec un <code>LEFT JOIN</code> depuis <code>users</code> : zéro ligne ⇒ le user
+n'existe pas ; une ligne avec des colonnes de tâche nulles ⇒ le user existe et n'a pas
+de tâche.</p>
+
+<h3 id="chapitre-10">Chapitre 10<a class="anchor" href="#chapitre-10" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.a.</strong> Deux raisons, et elles ne sont pas de même nature.
+<strong>(i)</strong> La durée : un import tient des minutes, là où une requête HTTP
+doit rendre la main. Chaque intermédiaire &mdash; proxy, ingress, client &mdash; a son
+délai d'expiration, et un navigateur qui réessaie relancerait l'import depuis le début.
+<strong>(ii)</strong> La frontière transactionnelle : <code>get_session</code> committe
+<em>à la fin de la requête</em>, alors que l'import committe lot par lot. Les deux
+découpages se contrediraient, et surtout un échec en cours de route laisserait un état
+<strong>partiellement importé</strong> qu'aucun code de statut HTTP ne sait décrire
+&mdash; 200 serait faux, 500 aussi.</p>
+
+<p><strong>1.b.</strong> Si le besoin est réel, on sépare le déclenchement du
+traitement : la route accepte le fichier, le range, publie un message et rend un
+<code>202 Accepted</code> avec un identifiant de tâche. Le worker exécute l'import ;
+une seconde route rend le rapport. La requête HTTP redevient courte, et le traitement
+long retrouve l'adaptateur driving qui lui convient.</p>
+
+<p><strong>2.</strong> Trois choses. <strong>(a)</strong> Les invariants inter-champs :
+plus rien ne vérifie qu'un <code>status</code> et un <code>completed_at</code> sont
+cohérents, et un value object ne peut pas le faire à sa place. <strong>(b)</strong>
+L'intention : <code>Task(...)</code> ne dit pas si l'on crée ou si l'on relit, alors que
+le nom <code>reconstitute</code> signale que l'identité et les dates viennent du dehors.
+<strong>(c)</strong> La distinction de confiance entre le mapper et l'import :
+<code>to_domain</code> relit notre base et lui fait confiance ; les fusionner oblige soit
+à faire payer la validation à chaque lecture (et à risquer de faire échouer la relecture
+de données anciennes), soit à ne plus valider les imports.</p>
+
+<p><strong>3.</strong> Pas dans le générateur &mdash; il est correct. Il faut regarder
+ce qui <strong>s'accumule d'un lot à l'autre</strong>, c'est-à-dire le rapport lui-même :
+la liste des rejets est non bornée, et surtout l'ensemble des identités déjà vues
+(utilisé pour détecter les doublons du fichier) grandit avec le nombre de lignes
+&mdash; 5 millions d'UUID représentent plusieurs centaines de Mio. C'est une limite
+réelle de cette implémentation, assumée à l'échelle d'un export applicatif. Deux
+sorties : borner les rejets conservés (les <em>n</em> premiers, puis un simple
+compteur), et abandonner la déduplication globale en la déléguant à
+<code>ON CONFLICT</code> &mdash; on perd la distinction entre «&nbsp;doublon du
+fichier&nbsp;» et «&nbsp;déjà en base&nbsp;», on gagne une mémoire constante.</p>
+
+<p><strong>4.</strong> <code>DO UPDATE</code> écrirait directement dans la ligne d'un
+agrégat <strong>sans passer par ses transitions</strong> : on pourrait ramener une tâche
+<code>done</code> à <code>todo</code>, ce que <code>Task.complete()</code> interdit
+précisément (<code>TaskAlreadyCompleted</code>, chapitre 04). Un <code>INSERT</code>
+groupé est acceptable parce qu'une insertion ne traverse aucune transition ; une mise à
+jour, si. Il faut donc soit garder l'import en insertion seule et faire passer les
+modifications par le chemin d'écriture normal (charger l'agrégat, appliquer la
+transition, sauvegarder), soit &mdash; si la mise à jour en masse est un vrai besoin
+&mdash; la modéliser comme une opération métier explicite, avec ses propres règles sur
+ce qui a le droit de changer.</p>
+
+<h3 id="chapitre-11">Chapitre 11<a class="anchor" href="#chapitre-11" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> <code>RenameUser</code> invalide <code>user:{id}</code> mais pas
+<code>users:all</code>, qui contiendrait toujours l'ancien nom. Deux stratégies :
+(a) invalidation explicite de toutes les clés dérivées à chaque mutation &mdash;
+simple, mais la liste des clés à connaître grandit et finit par être oubliée ; (b) ne
+pas cacher les listes, ou leur donner un TTL court et assumer une fenêtre
+d'obsolescence. En pratique, (b) est souvent le bon compromis : les listes sont peu
+coûteuses à recalculer et leur invalidation est le principal générateur de bugs de
+cache.</p>
+
+<p><strong>2.</strong> Parce que le cache traiterait le symptôme sans toucher à la
+cause : les 51 requêtes sont toujours émises au premier appel, à chaque expiration, et
+pour chaque variante de paramètres. Un déploiement, un redémarrage ou une purge suffit
+à faire réapparaître le pic &mdash; au pire moment, c'est-à-dire quand le trafic
+reprend. Avant de cacher : <strong>corriger la requête</strong> (une jointure, un query
+service). Ensuite seulement, se demander si le cache apporte encore quelque chose
+&mdash; souvent, la réponse est non.</p>
+
+<p><strong>3.</strong> Le use case renvoie un <code>NotifyResult</code> contenant les
+destinataires en échec ; le worker publie alors un message vers la DLQ
+(<code>reason="smtp_send_failed"</code>). Le message principal est acquitté parce qu'il
+<strong>a été traité</strong> : le rejouer renverrait les e-mails aux destinataires qui
+les ont déjà reçus. On sépare donc « le message a été consommé » de « tous ses effets
+ont réussi » &mdash; et la DLQ porte la seconde information. Sans ce
+<code>publish</code> explicite, ces échecs partiels seraient silencieusement perdus,
+puisqu'un message acquitté n'est jamais dead-letté.</p>
+
+<h3 id="chapitre-12">Chapitre 12<a class="anchor" href="#chapitre-12" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> Au niveau <strong>domaine</strong> : c'est une règle de validité
+du titre, donc dans <code>TaskTitle</code>. Deux ou trois tests unitaires suffisent
+(titre avec URL rejeté, titre sans URL accepté, et un cas limite genre
+<code>"exemple.com"</code> selon la définition retenue). <strong>Aucun</strong> test
+d'intégration : il ne prouverait rien de plus et coûterait des secondes. Si l'API doit
+renvoyer un message d'erreur particulier, alors <em>ça</em> est testable en intégration
+&mdash; mais c'est un autre test.</p>
+
+<p><strong>2.</strong> On perdrait la vérification que les erreurs déclenchent bien un
+<strong>rollback</strong>. Concrètement : un test qui poste une tâche avec un owner
+inexistant et vérifie ensuite qu'aucune ligne parasite ne subsiste ne prouverait plus
+rien. Reproduire la frontière transactionnelle réelle dans les tests n'est pas de la
+symétrie décorative &mdash; c'est ce qui rend le test représentatif de la production.</p>
+
+<p><strong>3.</strong> Un <code>INSERT</code> peut créer un état que le domaine n'aurait
+jamais produit : titre vide, <code>completed_at</code> renseigné sur une tâche
+<code>TODO</code>, e-mail non normalisé. Le test passerait alors sur une situation
+impossible, et pire, un test de lecture pourrait « valider » un comportement pour des
+données qui ne peuvent pas exister. Semer par les use cases garantit que l'état de
+départ est atteignable par le chemin d'écriture réel.</p>
+
+<h3 id="chapitre-13">Chapitre 13<a class="anchor" href="#chapitre-13" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1.</strong> Niveaux 1 et 2, probablement pas plus. Un value object pour la
+signature du webhook et l'identifiant d'événement (validation à la construction) et une
+petite entité qui protège l'idempotence (« un événement déjà traité ne se retraite
+pas ») apportent beaucoup pour presque rien. Les ports et mappers n'apporteraient rien :
+la complexité de ce service est technique (signatures, retries, ordre des événements),
+pas métier &mdash; c'est exactement le profil décrit dans « quand ne pas utiliser cette
+architecture ».</p>
+
+<p><strong>2.</strong> Par exemple : <code>catalog</code>, <code>ordering</code>,
+<code>shipping</code>. Le mot <strong><code>Product</code></strong> n'a pas le même sens
+dans <code>catalog</code> (description, photos, prix affiché, catégories) et dans
+<code>ordering</code> (référence, prix figé au moment de la commande, quantité). Le mot
+<strong><code>Customer</code></strong> diffère aussi entre <code>ordering</code>
+(adresse de facturation, moyens de paiement) et <code>shipping</code> (adresse de
+livraison, créneaux, contraintes d'accès). Ce n'est pas de la duplication à éliminer :
+ce sont deux concepts qui portent le même nom.</p>
+
+<p><strong>3.</strong> Pas de corrigé &mdash; c'est l'exercice le plus utile du cours.
+Le correctif le moins coûteux est presque toujours le même : sortir les règles des
+routers vers les entités et les value objects (niveaux 1 et 2 de l'« entre-deux »),
+avant d'introduire le moindre port.</p>
+
+<nav class="pager">
+  <a href="./13-demarrer-un-projet.html">&larr; 13. Démarrer un projet</a>
+  <a href="./ddd-strategique.html">DDD stratégique &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

@@ -8,13 +8,18 @@ base de données ni broker.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
+from task_manager.application.shared.bulk import BulkWriteResult
 from task_manager.application.shared.cache import CachePort
 from task_manager.application.shared.errors import EmailSendError
 from task_manager.application.shared.html_template.email_template import EmailTemplatePort
-from task_manager.application.shared.messaging import EventPublisherPort
+from task_manager.application.shared.messaging import EventPublisherPort, IntegrationEvent
 from task_manager.application.shared.smtp import SMTPSenderPort
+from task_manager.application.shared.unit_of_work import UnitOfWorkPort
+from task_manager.application.task.bulk import TaskBulkWriterPort
+from task_manager.application.user.bulk import UserBulkWriterPort
 from task_manager.domain.task.entities import Task
 from task_manager.domain.task.exceptions import TaskNotFound
 from task_manager.domain.task.repository import TaskRepository
@@ -110,13 +115,13 @@ class FakeCache(CachePort):
 
 
 class RecordingPublisher(EventPublisherPort):
-    """Publisher qui mémorise les messages publiés."""
+    """Publisher qui mémorise les événements publiés."""
 
     def __init__(self) -> None:
-        self.published: list[tuple[str, dict[str, Any]]] = []
+        self.published: list[IntegrationEvent] = []
 
-    async def publish(self, routing_key: str, payload: dict[str, Any]) -> None:
-        self.published.append((routing_key, payload))
+    async def publish(self, event: IntegrationEvent) -> None:
+        self.published.append(event)
 
 
 class FakeTemplate(EmailTemplatePort):
@@ -137,3 +142,60 @@ class FakeSMTP(SMTPSenderPort):
         if to_email in self.fail_for:
             raise EmailSendError(f"échec simulé pour {to_email}")
         self.sent.append({"to": to_email, "subject": subject, "body": body, "from": from_email})
+
+
+class FakeUserBulkWriter(UserBulkWriterPort):
+    """Écriture groupée d'utilisateurs, en mémoire.
+
+    Reproduit le point qui compte pour les tests : la sémantique ``ON CONFLICT DO
+    NOTHING``. Une identité déjà connue est *ignorée*, jamais écrasée ni remontée
+    en erreur. ``batches`` conserve la taille de chaque lot reçu, ce qui permet de
+    vérifier que le use case groupe réellement ses écritures.
+    """
+
+    def __init__(self, existing: list[User] | None = None) -> None:
+        self.stored: dict[UserId, User] = {u.id: u for u in (existing or [])}
+        self.batches: list[int] = []
+        self.existence_queries = 0
+
+    async def existing_ids(self, user_ids: Sequence[UserId]) -> set[UserId]:
+        self.existence_queries += 1
+        return {uid for uid in user_ids if uid in self.stored}
+
+    async def save_all(self, users: Sequence[User]) -> BulkWriteResult:
+        self.batches.append(len(users))
+        inserted = 0
+        for user in users:
+            if user.id in self.stored:
+                continue
+            self.stored[user.id] = user
+            inserted += 1
+        return BulkWriteResult(inserted=inserted, skipped=len(users) - inserted)
+
+
+class FakeTaskBulkWriter(TaskBulkWriterPort):
+    """Écriture groupée de tâches, en mémoire (même sémantique que ci-dessus)."""
+
+    def __init__(self, existing: list[Task] | None = None) -> None:
+        self.stored: dict[TaskId, Task] = {t.id: t for t in (existing or [])}
+        self.batches: list[int] = []
+
+    async def save_all(self, tasks: Sequence[Task]) -> BulkWriteResult:
+        self.batches.append(len(tasks))
+        inserted = 0
+        for task in tasks:
+            if task.id in self.stored:
+                continue
+            self.stored[task.id] = task
+            inserted += 1
+        return BulkWriteResult(inserted=inserted, skipped=len(tasks) - inserted)
+
+
+class FakeUnitOfWork(UnitOfWorkPort):
+    """Compte les commits, seule chose qu'un test ait besoin d'observer ici."""
+
+    def __init__(self) -> None:
+        self.commits = 0
+
+    async def commit(self) -> None:
+        self.commits += 1

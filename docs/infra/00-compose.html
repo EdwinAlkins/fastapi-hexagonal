@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>00. Docker Compose &mdash; Infrastructure &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Le point de départ : une stack de développement complète en une commande, avec des healthchecks et un graphe de dépendances qui séquence vraiment le démarrage.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html">Cours</a>
+    <a href="../infra/index.html" aria-current="true">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Sections de l'infrastructure">
+  <h2>Infrastructure</h2>
+  <ul>
+    <li><a href="./index.html">Vue d'ensemble</a></li>
+    <li><a href="./00-compose.html" aria-current="page"><span class="num">00</span>Docker Compose</a></li>
+    <li><a href="./01-donnees.html"><span class="num">01</span>Les données</a></li>
+    <li><a href="./02-workloads.html"><span class="num">02</span>Les workloads</a></li>
+    <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
+    <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
+    <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+  </ul>
+  <h2>Voir aussi</h2>
+  <ul>
+    <li><a href="../cours/index.html">Le cours</a></li>
+    <li><a href="../cours/12-organisation-et-tests.html">Organisation &amp; tests</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>00. Docker Compose, le point de départ</h1>
+  <p class="lede">Avant le cluster, la stack de développement &mdash; et elle en
+  apprend plus qu'on ne croit sur la mise en route d'un système distribué.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Onze services en une commande, avec de vrais
+  <strong>healthchecks</strong> et un graphe de <code>depends_on</code> qui
+  <em>séquence</em> réellement le démarrage. C'est là que se règle l'essentiel des
+  problèmes d'ordre &mdash; et ce qu'on résout ici se retrouve, sous une autre
+  forme, dans les manifestes Kubernetes.
+</div>
+
+<h2 id="une-commande">Une commande<a class="anchor" href="#une-commande" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="bash"><pre><code>cp .env.template .env
+docker compose up --build        # → http://localhost:8000/docs</code></pre></div>
+
+<p>Pour ne travailler que sur le backend, trois services suffisent &mdash; l'API
+tourne alors en local avec le rechargement à chaud :</p>
+
+<div class="snippet" data-lang="bash"><pre><code>docker compose up -d postgres pgbouncer valkey
+cd backend &amp;&amp; make run</code></pre></div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Service</th><th>Image</th><th>Rôle</th></tr></thead>
+  <tbody>
+    <tr><td><code>postgres</code></td><td><code>postgres:17-alpine</code></td><td>La base</td></tr>
+    <tr><td><code>pgbouncer</code></td><td><code>edoburu/pgbouncer:v1.25.2-p0</code></td><td>Pooler, mode transaction</td></tr>
+    <tr><td><code>rabbitmq</code></td><td><code>rabbitmq:4-management-alpine</code></td><td>Broker + console</td></tr>
+    <tr><td><code>valkey</code></td><td><code>valkey/valkey:8-alpine</code></td><td>Cache, <code>--appendonly yes</code></td></tr>
+    <tr><td><code>mailpit</code></td><td><code>axllent/mailpit:latest</code></td><td>SMTP de test + webmail</td></tr>
+    <tr><td><code>prometheus</code></td><td><code>prom/prometheus:v3.1.0</code></td><td>Métriques de l'API</td></tr>
+    <tr><td><code>redisinsight</code></td><td><code>redis/redisinsight:latest</code></td><td>Inspecter le cache</td></tr>
+    <tr><td><code>migrate</code></td><td>image du backend</td><td><code>alembic upgrade head</code>, puis s'arrête</td></tr>
+    <tr><td><code>api</code></td><td>image du backend</td><td>Gunicorn / Uvicorn</td></tr>
+    <tr><td><code>worker</code></td><td>image du backend</td><td>Consumer RabbitMQ</td></tr>
+    <tr><td><code>frontend</code></td><td>image du frontend</td><td>Preact + nginx</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="le-vrai-sujet-lordre-de-démarrage">Le vrai sujet : l'ordre de démarrage<a class="anchor" href="#le-vrai-sujet-lordre-de-démarrage" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Onze conteneurs qui démarrent en même temps, c'est onze façons d'échouer. L'API
+qui se connecte à une base pas encore prête, le worker qui déclare une file sur un
+broker en cours d'initialisation, les migrations qui partent avant que PostgreSQL
+n'accepte les connexions.</p>
+
+<p>La réponse tient en deux mécanismes qui n'ont d'intérêt qu'ensemble.</p>
+
+<h3 id="les-healthchecks">1. Les healthchecks : « prêt » plutôt que « démarré »<a class="anchor" href="#les-healthchecks" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="snippet" data-lang="yaml"><pre><code>postgres:
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+    interval: 10s
+    retries: 5
+
+rabbitmq:
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+    interval: 15s
+    retries: 5
+
+valkey:
+  healthcheck:
+    test: ["CMD", "valkey-cli", "ping"]</code></pre></div>
+
+<p>Chaque sonde interroge le service <strong>dans sa propre langue</strong> :
+<code>pg_isready</code> pour PostgreSQL, <code>rabbitmq-diagnostics ping</code> pour
+le broker, <code>valkey-cli ping</code> pour le cache. Pas de
+<code>curl</code> générique, pas de test de port TCP &mdash; un port ouvert ne
+signifie pas qu'une base accepte des requêtes.</p>
+
+<h3 id="depends_on-avec-condition">2. <code>depends_on</code> avec condition<a class="anchor" href="#depends_on-avec-condition" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est le point que la plupart des fichiers Compose ratent. Un
+<code>depends_on</code> nu ne fait qu'ordonner le <em>lancement</em> : Docker
+démarre le conteneur A avant le B, sans jamais vérifier que A fonctionne. Ici,
+chaque dépendance porte une <strong>condition</strong> :</p>
+
+<div class="snippet" data-lang="yaml"><pre><code>api:
+  depends_on:
+    migrate:
+      condition: service_completed_successfully   # le schéma est en place
+    pgbouncer:
+      condition: service_healthy                  # le pooler répond
+    valkey:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    mailpit:
+      condition: service_started                  # démarré suffit</code></pre></div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Condition</th><th>Signifie</th><th>Utilisée pour</th></tr></thead>
+  <tbody>
+    <tr><td><code>service_started</code></td><td>Le conteneur tourne</td><td>Mailpit &mdash; pas de sonde, et sa panne n'est pas bloquante</td></tr>
+    <tr><td><code>service_healthy</code></td><td>Le healthcheck passe</td><td>postgres, pgbouncer, valkey, rabbitmq, api</td></tr>
+    <tr><td><code>service_completed_successfully</code></td><td>Le conteneur s'est arrêté en succès</td><td><code>migrate</code> &mdash; une tâche, pas un service</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>La condition qui fait tout le travail</strong>
+  <code>service_completed_successfully</code> sur <code>migrate</code> transforme un
+  conteneur éphémère en <strong>barrière</strong> : ni l'API ni le worker ne
+  démarrent tant que les migrations n'ont pas réussi. C'est exactement le rôle que
+  joue le <code>Job</code> Alembic côté Kubernetes
+  (<a href="./01-donnees.html#les-migrations-contournent-le-pooler">ch. 01</a>) — et
+  <code>deploy.sh</code> le rend explicite avec un
+  <code>kubectl wait --for=condition=complete</code>. Même problème, même solution,
+  deux vocabulaires.
+</div>
+
+<h2 id="le-graphe">Le graphe de démarrage<a class="anchor" href="#le-graphe" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 800 300" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Graphe de démarrage : postgres doit être sain avant pgbouncer, qui doit l'être avant migrate. Une fois migrate terminé avec succès, et pgbouncer, valkey, rabbitmq sains et mailpit démarré, l'API démarre. Le worker attend en plus que l'API soit saine, et le frontend attend l'API.">
+  <defs>
+    <marker id="fc0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="24" width="118" height="38" rx="6"/>
+      <rect x="8" y="78" width="118" height="38" rx="6"/>
+      <rect x="8" y="132" width="118" height="38" rx="6"/>
+      <rect x="8" y="186" width="118" height="38" rx="6"/>
+      <rect x="176" y="78" width="118" height="38" rx="6"/>
+      <rect x="516" y="132" width="118" height="38" rx="6"/>
+      <rect x="516" y="34" width="118" height="38" rx="6"/>
+    </g>
+    <rect x="344" y="78" width="118" height="38" rx="6" fill="var(--raised)" stroke="var(--accent)"/>
+    <rect x="344" y="186" width="118" height="38" rx="6" fill="var(--surface)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="11" font-weight="600" text-anchor="middle">
+      <text x="67" y="48">postgres</text>
+      <text x="67" y="102">valkey</text>
+      <text x="67" y="156">rabbitmq</text>
+      <text x="67" y="210">mailpit</text>
+      <text x="235" y="102">pgbouncer</text>
+      <text x="403" y="102">migrate</text>
+      <text x="403" y="210">api</text>
+      <text x="575" y="156">worker</text>
+      <text x="575" y="58">frontend</text>
+    </g>
+    <g fill="var(--muted)" font-size="9" text-anchor="middle">
+      <text x="403" y="114">tâche</text>
+      <text x="67" y="222">started</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.4" fill="none" marker-end="url(#fc0)">
+      <line x1="128" y1="55" x2="172" y2="88"/>
+      <line x1="296" y1="97" x2="340" y2="97"/>
+      <path d="M 403 118 L 403 182"/>
+      <path d="M 128 101 L 150 101 L 150 240 L 330 240 L 330 214 L 340 214"/>
+      <path d="M 128 155 L 158 155 L 158 248 L 336 248 L 336 220 L 340 220"/>
+      <path d="M 128 205 L 166 205 L 166 256 L 342 256 L 342 226 L 340 226"/>
+      <path d="M 464 205 L 490 205 L 490 158 L 512 158"/>
+      <path d="M 464 196 L 490 196 L 490 58 L 512 58"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="9" text-anchor="middle">
+      <text x="150" y="66">healthy</text>
+      <text x="318" y="90">healthy</text>
+      <text x="424" y="152">completed</text>
+      <text x="424" y="164">successfully</text>
+      <text x="497" y="112">healthy</text>
+    </g>
+
+    <text x="240" y="284" fill="var(--muted)" font-size="10.5" text-anchor="middle">Chaque flèche porte une condition : rien ne démarre « au cas où ».</text>
+  </g>
+</svg>
+</figure>
+
+<p>Le worker est le plus contraint : il attend les migrations, le pooler, le
+broker, Mailpit… <strong>et l'API en bonne santé</strong>. Ce dernier lien n'est
+pas une nécessité technique &mdash; le worker ne parle jamais à l'API. C'est un
+choix de confort en développement : si l'API ne démarre pas, on veut le voir sans
+que les logs du worker ne défilent par-dessus.</p>
+
+<h2 id="ce-que-compose-fait-mieux">Ce que Compose fait mieux que Kubernetes<a class="anchor" href="#ce-que-compose-fait-mieux" aria-label="Lien vers cette section">#</a></h2>
+
+<p>La comparaison n'est pas à sens unique, et il serait malhonnête de présenter le
+cluster comme un progrès sur toute la ligne.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Docker Compose</th><th>Kubernetes (Kind)</th></tr></thead>
+  <tbody>
+    <tr><td>Démarrer</td><td><code>docker compose up</code></td><td>Un script, deux opérateurs à installer, des images à charger</td></tr>
+    <tr><td>Ordre de démarrage</td><td><strong>Déclaratif et garanti</strong> (<code>depends_on</code> + conditions)</td><td>À reconstruire : <code>wait</code>, Jobs, <code>initContainers</code></td></tr>
+    <tr><td>Rechargement à chaud</td><td>Un bind-mount suffit</td><td>Rebuild + <code>kind load</code> + <code>rollout restart</code></td></tr>
+    <tr><td>Lire les logs</td><td><code>docker compose logs -f api</code></td><td><code>kubectl logs -f deployment/api</code>, par pod</td></tr>
+    <tr><td>Haute disponibilité</td><td>&mdash;</td><td>Réplicas, failover, anti-affinité</td></tr>
+    <tr><td>Segmentation réseau</td><td>Réseaux Docker, grossier</td><td>NetworkPolicy par cible</td></tr>
+    <tr><td>Montée en charge</td><td>Manuelle</td><td>HPA</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>L'ordre de démarrage est le cas le plus frappant : <strong>Kubernetes n'a pas
+d'équivalent direct de <code>depends_on: condition</code></strong>. Un pod démarre
+quand le scheduler le décide, et on rétablit la séquence avec des sondes de
+readiness, des <code>initContainers</code>, un <code>Job</code> barrière et des
+<code>kubectl wait</code> dans le script de déploiement. Ce que Compose exprime en
+trois lignes se répartit dans quatre mécanismes.</p>
+
+<div class="note">
+  <strong>Les deux ne s'opposent pas, ils se succèdent</strong>
+  Compose est l'environnement de <strong>développement</strong> : démarrage en
+  secondes, boucle de retour immédiate, un seul fichier à lire. Kind est le banc
+  d'essai des <strong>comportements d'exploitation</strong> : failover, drain,
+  autoscaling, segmentation. Le premier sert tous les jours, le second sert quand on
+  veut vérifier une hypothèse d'infrastructure.
+</div>
+
+<h2 id="ce-quon-emporte">Ce qu'on emporte vers le cluster<a class="anchor" href="#ce-quon-emporte" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Écrire le Compose d'abord n'est pas une étape jetable : les décisions qu'on y
+prend se retrouvent presque toutes, et c'est ce qui rend la traduction si rapide.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Décision prise dans Compose</th><th>Ce qu'elle devient</th></tr></thead>
+  <tbody>
+    <tr><td>Pooler en mode transaction</td><td>La même contrainte, et les mêmes trois réglages côté code (<a href="./01-donnees.html">ch. 01</a>)</td></tr>
+    <tr><td><code>migrate</code> comme service éphémère</td><td>Un <code>Job</code> + un <code>kubectl wait</code></td></tr>
+    <tr><td>Healthcheck HTTP de l'API</td><td><code>readinessProbe</code> et <code>livenessProbe</code> sur <code>/health</code></td></tr>
+    <tr><td>Variables <code>APP_*</code></td><td>Une <code>ConfigMap</code>, plus les URLs interpolées (<a href="./02-workloads.html#configuration">ch. 02</a>)</td></tr>
+    <tr><td>Une image pour api / worker / migrate</td><td>Trois workloads, une image (<a href="./02-workloads.html#une-image-trois-rôles">ch. 02</a>)</td></tr>
+    <tr><td>Volumes nommés</td><td>Stockage géré par les opérateurs</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>La seule décision qui <strong>ne</strong> se transporte pas est justement
+l'ordre de démarrage : il faut le réexprimer autrement. Tout le reste est une
+traduction de vocabulaire.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Un <code>depends_on</code> <strong>nu ne garantit rien</strong> : sans
+      <code>condition</code>, il n'ordonne que le lancement.</li>
+  <li>Un healthcheck interroge le service <strong>dans sa langue</strong> &mdash; un
+      port ouvert ne veut pas dire prêt.</li>
+  <li><code>service_completed_successfully</code> transforme un conteneur éphémère
+      en <strong>barrière</strong> : c'est le <code>Job</code> Alembic avant l'heure.</li>
+  <li>Compose reste <strong>meilleur</strong> pour développer : démarrage,
+      rechargement à chaud, ordre déclaratif.</li>
+  <li>Presque toutes les décisions se transportent vers le cluster &mdash; sauf
+      l'ordre de démarrage, qu'il faut réexprimer en quatre mécanismes.</li>
+</ul>
+
+<nav class="pager">
+  <a href="./index.html">&larr; Vue d'ensemble</a>
+  <a href="./01-donnees.html">01. Les données &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Infrastructure FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

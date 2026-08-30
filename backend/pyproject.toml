@@ -51,7 +51,11 @@ target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+# SLF (flake8-self) : interdit l'accès à un membre privé depuis l'extérieur
+# (`task._status`). `self._x` reste autorisé. C'est le pendant de mypy, qui refuse
+# déjà l'affectation sur une propriété en lecture seule — les deux ensemble ferment
+# les deux façons de contourner un invariant d'entité.
+select = ["E", "F", "I", "UP", "B", "SIM", "SLF"]
 
 [tool.mypy]
 python_version = "3.14"

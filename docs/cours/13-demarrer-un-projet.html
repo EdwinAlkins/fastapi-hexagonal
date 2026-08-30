@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13. Démarrer un projet &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="La recette couche par couche, la checklist de revue, les pièges fréquents — et surtout : quand ne pas utiliser cette architecture, avec la progression graduée de l'entre-deux.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html" aria-current="page"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>13. Démarrer un nouveau projet</h1>
+  <p class="lede">Les concepts transformés en recette &mdash; et le chapitre qui
+  t'autorise à ne pas les appliquer.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Pars du cœur vers l'extérieur. Vérifie la
+  checklist. Et surtout : sache reconnaître les projets où <strong>rien de tout
+  ça</strong> n'est justifié.
+</div>
+
+<p>Ce chapitre est volontairement agnostique : les principes valent en Python,
+Java, C#, TypeScript, Go.</p>
+
+<h2 id="la-recette-couche-par-couche">La recette, couche par couche<a class="anchor" href="#la-recette-couche-par-couche" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Commencer par le cœur est contre-intuitif &mdash; on veut souvent partir de la
+base ou de l'API. C'est justement ce qui garde le domaine pur : tout ce que tu
+écris avant d'avoir une base de données est, par construction, indépendant d'elle.</p>
+
+<h3 id="étape-0--le-langage-avant-le-code">Étape 0 — Le langage avant le code<a class="anchor" href="#étape-0--le-langage-avant-le-code" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Avant tout fichier, écris la liste des <strong>noms du métier</strong> et leur
+définition : qu'est-ce qu'une « tâche » ? Qu'est-ce que « terminer » veut dire
+exactement ? Qui a le droit de le faire ? Si tu ne sais pas répondre, aucune
+architecture ne te sauvera.</p>
+
+<p>C'est aussi ici que tu cherches les <strong>bounded contexts</strong> &mdash;
+des frontières à l'intérieur desquelles un modèle et son langage restent cohérents
+(<a href="./03-le-domaine.html#bounded-context--une-frontière-de-sens">ch. 03</a>).
+L'indice le plus visible est le vocabulaire : un « utilisateur » au sens
+authentification (identifiants, sessions, rôles) n'est pas le même concept qu'un
+« utilisateur » au sens métier (propriétaire de tâches), même s'ils partagent un
+identifiant. Un mot qui recouvre deux concepts est un signal fort &mdash; mais
+c'est la cohérence du <em>modèle</em> qui tranche, pas le lexique seul.</p>
+
+<h3 id="étape-1--le-domaine-aucune-dépendance-technique">Étape 1 — Le domaine (aucune dépendance technique)<a class="anchor" href="#étape-1--le-domaine-aucune-dépendance-technique" aria-label="Lien vers cette section">#</a></h3>
+
+<ol>
+  <li>Identifie les <strong>value objects</strong> : concepts définis par leur
+      valeur, avec leurs règles de validité (<code>Email</code>, <code>Money</code>,
+      <code>TaskTitle</code>). Auto-validés à la construction.</li>
+  <li>Identifie les <strong>entités</strong> et <strong>agrégats</strong> : les
+      concepts avec une identité, et surtout <strong>les frontières de cohérence
+      transactionnelle</strong> (<a href="./04-les-agregats.html">ch. 04</a>).
+      Exprime les invariants en méthodes (<code>order.confirm()</code>, pas
+      <code>order.status = ...</code>).</li>
+  <li>Écris les <strong>exceptions métier</strong>, hiérarchisées par sémantique
+      (<code>NotFound</code>, <code>Conflict</code>, <code>Validation</code>).</li>
+  <li>Déclare les <strong>ports de persistance</strong> dont le modèle a besoin.</li>
+</ol>
+
+<p>✅ Vérifie : le domaine s'importe-t-il sans aucun framework ? Ses tests
+unitaires tournent-ils en millisecondes ? Écris-les <strong>maintenant</strong>,
+pas plus tard.</p>
+
+<h3 id="étape-2--lapplication-dépend-du-domaine-seul">Étape 2 — L'application (dépend du domaine seul)<a class="anchor" href="#étape-2--lapplication-dépend-du-domaine-seul" aria-label="Lien vers cette section">#</a></h3>
+
+<ol start="5">
+  <li>Un <strong>use case</strong> par action (<code>CreateOrder</code>,
+      <code>CancelOrder</code>). Il reçoit des ports, orchestre, ne porte pas les
+      invariants.</li>
+  <li>Des <strong>DTO</strong> neutres en entrée (commandes) et en sortie.</li>
+  <li>Les <strong>ports techniques</strong> dont les cas d'usage ont besoin (cache,
+      notification, publication) &mdash; dans <code>application/</code>, pas dans le
+      domaine (<a href="./06-application-et-ports.html">ch. 06</a>).</li>
+</ol>
+
+<h3 id="étape-3--les-adaptateurs">Étape 3 — Les adaptateurs<a class="anchor" href="#étape-3--les-adaptateurs" aria-label="Lien vers cette section">#</a></h3>
+
+<ol start="8">
+  <li><strong>Persistance</strong> : modèles ORM (distincts des entités),
+      <strong>mappers</strong>, et l'implémentation concrète des ports. Les
+      repositories ne committent pas et reçoivent leur session.</li>
+  <li><strong>Entrée</strong> : schémas de transport, routers/commandes/consumers
+      qui traduisent, et rien d'autre.</li>
+</ol>
+
+<h3 id="étape-4--le-câblage-transverse">Étape 4 — Le câblage transverse<a class="anchor" href="#étape-4--le-câblage-transverse" aria-label="Lien vers cette section">#</a></h3>
+
+<ol start="10">
+  <li>La <strong>frontière transactionnelle</strong>, fournie par chaque adaptateur
+      entrant.</li>
+  <li>La traduction <strong>erreurs métier / erreurs techniques → protocole</strong>.</li>
+  <li>La <strong>composition root</strong> qui relie ports et adaptateurs.</li>
+  <li>Les <strong>tests d'intégration</strong> de bout en bout, sur les moteurs
+      réels.</li>
+</ol>
+
+<h3 id="étape-5--les-garde-fous-tout-de-suite">Étape 5 — Les garde-fous, tout de suite<a class="anchor" href="#étape-5--les-garde-fous-tout-de-suite" aria-label="Lien vers cette section">#</a></h3>
+
+<ol start="14">
+  <li>Le <strong>contrôle automatique de la règle de dépendance</strong>
+      (import-linter ou équivalent), en CI dès le premier jour. Ajouté après six
+      mois, il ne passe jamais du premier coup.</li>
+</ol>
+
+<h2 id="squelette-de-démarrage">Squelette de démarrage<a class="anchor" href="#squelette-de-démarrage" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="bash"><pre><code>mkdir -p src/monprojet/domain/{shared,mon_contexte}
+mkdir -p src/monprojet/application/{shared,mon_contexte}
+mkdir -p src/monprojet/infrastructure/persistence/mon_contexte
+mkdir -p src/monprojet/presentation/api/v1/{routers,schemas}
+mkdir -p tests/{unit/domain,unit/application,integration}</code></pre></div>
+
+<p>Dans ce dépôt, le contexte <strong><code>user</code></strong> est la référence
+complète : domaine, application, persistance, DI, schémas, routers, tests aux trois
+niveaux. Pour un use case seul, <code>RenameUser</code> est l'exemple minimal
+(mutation + invalidation de cache).</p>
+
+<h2 id="checklist-de-revue">Checklist de revue<a class="anchor" href="#checklist-de-revue" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Avant de dire « c'est propre » :</p>
+
+<ul>
+  <li>Le contrôle d'architecture passe (<code>make imports</code>) &mdash; pas juste
+      un <code>grep</code>.</li>
+  <li>Les entités changent d'état par <strong>méthodes</strong>, jamais par
+      attributs nus.</li>
+  <li>Les value objects valident <strong>une forme</strong>, sans I/O.</li>
+  <li>Chaque agrégat a une <strong>frontière justifiable</strong> : quel invariant
+      la motive ?</li>
+  <li>Les agrégats se référencent <strong>par identité</strong> ; à l'intérieur, les
+      objets se référencent normalement.</li>
+  <li>Les repositories <strong>ne committent pas</strong> ; la transaction entoure
+      le use case.</li>
+  <li>Le domaine lève des <strong>exceptions métier</strong> ; les erreurs
+      techniques ont leur hiérarchie et leur code (5xx).</li>
+  <li>Aucun <code>HTTPException</code>, aucun logger, aucun framework dans le
+      domaine.</li>
+  <li>Les use cases sont testables <strong>sans</strong> base ni HTTP (doublures en
+      mémoire).</li>
+  <li>Chaque port est dans la couche qui <strong>exprime le besoin</strong>.</li>
+  <li>Tout cache a un <strong>contrat d'invalidation écrit</strong>.</li>
+  <li>Un nouveau contexte = de <strong>nouveaux fichiers</strong>, pas des
+      modifications dispersées.</li>
+</ul>
+
+<h2 id="les-pièges-les-plus-fréquents">Les pièges les plus fréquents<a class="anchor" href="#les-pièges-les-plus-fréquents" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Modèle anémique</strong> : des entités sans comportement, toute la
+      logique dans les use cases (ou pire, dans les routers). Le domaine n'existe
+      alors pas vraiment.</li>
+  <li><strong>Fusionner entité et modèle ORM</strong> : le domaine se met à dépendre
+      de l'ORM.</li>
+  <li><strong>Committer dans le repository</strong> : casse l'atomicité
+      multi-écritures.</li>
+  <li><strong>Naviguer entre agrégats</strong> (<code>user.tasks</code>) au lieu de
+      requêter par identité.</li>
+  <li><strong>Croire que le DDD interdit les collections</strong> : à l'intérieur
+      d'un agrégat, elles sont normales
+      (<a href="./04-les-agregats.html">ch. 04</a>).</li>
+  <li><strong>Tout mettre dans des services</strong> : c'est le modèle anémique
+      déguisé.</li>
+  <li><strong>Ranger toutes les erreurs sous <code>DomainError</code></strong> : une
+      panne de broker n'est pas un problème métier.</li>
+  <li><strong>Confondre query service et CQRS</strong>
+      (<a href="./09-lectures-et-query-services.html#et-cqrs-alors-">ch. 09</a>).</li>
+  <li><strong>Sur-découper</strong> : appliquer un pattern (façade, sous-dossiers)
+      partout par réflexe. Le découpage doit servir la lisibilité, cas par cas.</li>
+  <li><strong>Attendre pour automatiser la règle de dépendance.</strong></li>
+</ul>
+
+<h2 id="quand-ne-pas-utiliser-cette-architecture">Quand NE PAS utiliser cette architecture<a class="anchor" href="#quand-ne-pas-utiliser-cette-architecture" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Elle a un coût réel &mdash; plus de fichiers, des mappers, de l'indirection
+&mdash; qui se rentabilise quand le <strong>métier est riche</strong> et la
+<strong>durée de vie longue</strong>. Les signaux qu'elle est surdimensionnée :</p>
+
+<ul>
+  <li><strong>Un CRUD sans règles.</strong> Si le seul invariant est « ce champ est
+      obligatoire », tes entités seront des DTO avec un mapper &mdash; pure
+      cérémonie.</li>
+  <li><strong>Un prototype jetable</strong>, un script, un one-shot d'analyse.</li>
+  <li><strong>Une équipe d'une personne sur trois mois</strong>, sur un besoin qui
+      ne durera pas.</li>
+  <li><strong>Un service dont le vrai travail est ailleurs</strong> : un proxy, un
+      ETL, un transformateur de fichiers. Leur complexité est technique, pas métier
+      &mdash; cette architecture protège le métier d'une complexité qu'ils n'ont
+      pas.</li>
+</ul>
+
+<p>Dans ces cas : FastAPI + Pydantic + un ORM à plat suffisent, et sont
+<strong>plus lisibles</strong>. Savoir ne pas appliquer un pattern fait partie de sa
+maîtrise.</p>
+
+<h3 id="et-lentre-deux-">Et l'entre-deux ?<a class="anchor" href="#et-lentre-deux-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est le cas le plus fréquent, et il n'oblige pas à choisir en bloc. Ces
+éléments se prennent séparément, par ordre de rapport bénéfice/coût :</p>
+
+<ol>
+  <li><strong>Des value objects auto-validés</strong> &mdash; quasiment gratuits,
+      bénéfice immédiat.</li>
+  <li><strong>Des règles dans les entités</strong> plutôt que dans les routers
+      &mdash; gratuit aussi.</li>
+  <li><strong>Des use cases</strong> appelables hors HTTP &mdash; le jour où un CLI
+      ou un cron arrive.</li>
+  <li><strong>Des ports et des mappers</strong> &mdash; le plus coûteux ; à prendre
+      quand la substituabilité ou la testabilité sans I/O devient un vrai besoin.</li>
+</ol>
+
+<p>Beaucoup de projets gagnent énormément aux niveaux 1 et 2, et n'ont jamais
+besoin du 4.</p>
+
+<h2 id="pour-aller-plus-loin">Pour aller plus loin<a class="anchor" href="#pour-aller-plus-loin" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Domain-Driven Design</strong> (Eric Evans) &mdash; le livre fondateur.
+      Le DDD stratégique (première partie) est plus important que les patterns
+      tactiques, et bien moins lu.</li>
+  <li><strong>Implementing Domain-Driven Design</strong> (Vaughn Vernon) &mdash;
+      plus pratique ; c'est de là que vient « référencer les agrégats par
+      identité ».</li>
+  <li><strong>Hexagonal Architecture</strong> (Alistair Cockburn, 2005) &mdash;
+      l'article d'origine des ports &amp; adapters, court et toujours pertinent.</li>
+  <li><strong>Clean Architecture</strong> (Robert C. Martin) &mdash; la règle de
+      dépendance formalisée, et l'origine du découpage en quatre couches utilisé
+      ici.</li>
+  <li><strong>Patterns of Enterprise Application Architecture</strong> (Martin
+      Fowler) &mdash; les définitions de référence de <em>Repository</em>,
+      <em>Unit of Work</em>, <em>Data Mapper</em>.</li>
+  <li><strong>Architecture Patterns with Python</strong> (Percival &amp; Gregory)
+      &mdash; le plus proche de ce projet : Python, ports &amp; adapters, Unit of
+      Work, événements. Lisible en ligne.</li>
+</ul>
+
+<h2 id="le-mot-de-la-fin">Le mot de la fin<a class="anchor" href="#le-mot-de-la-fin" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Ne récite pas les patterns. Ce cours tient en deux questions à te poser en
+permanence :</p>
+
+<blockquote>
+  <p><strong>Cette décision, à qui appartient-elle ?</strong><br>
+  <strong>Qu'est-ce qui doit être cohérent au sein d'une même transaction ?</strong></p>
+</blockquote>
+
+<p>Ports, mappers, DTO, composition root ne sont que la machinerie qui rend les
+réponses exécutables. Si un choix protège l'isolation du cœur métier tout en
+gardant le code lisible, il est probablement bon &mdash; même s'il ne suit aucun
+pattern nommé. Et s'il suit tous les patterns nommés sans que personne ne sache
+dire quel problème il résout, il est probablement mauvais.</p>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Un service qui reçoit des webhooks Stripe, les valide et les range en base.
+        Combien de niveaux de la liste « entre-deux » lui appliquerais-tu ?</li>
+    <li>Pour un e-commerce, propose trois bounded contexts et cite un mot qui n'a
+        pas le même sens dans deux d'entre eux.</li>
+    <li>Reprends la checklist et applique-la à un projet que tu connais. Quel point
+        échoue en premier, et quel serait le correctif le moins coûteux ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-13">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./12-organisation-et-tests.html">&larr; 12. Organisation &amp; tests</a>
+  <a href="./14-annexes.html">14. Annexes &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

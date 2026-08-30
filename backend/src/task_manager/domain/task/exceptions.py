@@ -44,3 +44,15 @@ class TaskNotFound(NotFoundError):
     def __init__(self, task_id: str) -> None:
         self.task_id = task_id
         super().__init__(f"Aucune tâche trouvée pour l'identifiant {task_id}.")
+
+
+class InconsistentTaskState(ValidationError):
+    """L'état reconstitué d'une tâche est incohérent.
+
+    Levée par ``Task.reconstitute`` uniquement. Les value objects valident chacun
+    *un* champ ; cet invariant-là porte sur la **combinaison** de plusieurs champs,
+    et ne peut donc vivre qu'au niveau de l'entité.
+    """
+
+    def __init__(self, raison: str) -> None:
+        super().__init__(f"État de tâche incohérent : {raison}.")

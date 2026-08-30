@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01. La règle de dépendance &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Une seule règle : les import pointent vers l'intérieur. Ports, adaptateurs driving et driven, et comment vérifier la règle mécaniquement avec import-linter.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html" aria-current="page"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>01. La règle de dépendance</h1>
+  <p class="lede">La seule règle qui compte &mdash; et comment la rendre vérifiable
+  plutôt que déclarative.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Une seule règle : les <code>import</code>
+  pointent vers l'intérieur, vers le cœur métier. Tout le reste du cours en
+  découle. Elle est vérifiable mécaniquement, en CI, par import-linter.
+</div>
+
+<p>L'architecture hexagonale &mdash; publiée par Alistair Cockburn en 2005 sous le
+nom <strong>ports &amp; adapters</strong> &mdash; répond au problème du
+<a href="./00-le-probleme.html">chapitre 00</a> avec une règle unique.</p>
+
+<h2 id="la-règle">La règle<a class="anchor" href="#la-règle" aria-label="Lien vers cette section">#</a></h2>
+
+<blockquote>
+  <p>Les dépendances du code pointent <strong>toujours vers l'intérieur</strong>.
+  Le cœur ne connaît aucune implémentation concrète du monde extérieur.</p>
+</blockquote>
+
+<p>Attention à une confusion fréquente : « le cœur ne connaît rien de l'extérieur »
+ne veut pas dire qu'il ignore tout besoin externe. Le domaine <strong>déclare</strong>
+ce dont il a besoin (« je dois pouvoir sauvegarder une tâche ») sous forme
+d'interfaces &mdash; les <strong>ports</strong> &mdash; sans jamais savoir qui les
+réalise. C'est de l'<strong>inversion de dépendance</strong> : le besoin est
+possédé par celui qui l'exprime, pas par celui qui le satisfait.</p>
+
+<p>L'analogie de la prise électrique tient bien : ton appartement définit un
+standard de prise (le port). Il ne sait pas si tu y brancheras une lampe ou un
+aspirateur (les adaptateurs). Et surtout, ce n'est pas l'aspirateur qui dicte la
+forme de la prise.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 640 420" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Trois adaptateurs driving — API HTTP, CLI et worker RabbitMQ — pointent vers la couche application, qui pointe vers le domaine en Python pur. En bas, les adaptateurs driven — PostgreSQL, Valkey, SMTP et RabbitMQ — pointent eux aussi vers l'application, dont ils implémentent les ports.">
+  <defs>
+    <marker id="f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="none" stroke="var(--line)" stroke-dasharray="4 4">
+      <rect x="10" y="34" width="560" height="84" rx="8"/>
+      <rect x="10" y="344" width="560" height="62" rx="8"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="10.5" letter-spacing="0.07em" text-anchor="middle">
+      <text x="290" y="26">ADAPTATEURS DRIVING &#183; PILOTENT</text>
+      <text x="290" y="336">ADAPTATEURS DRIVEN &#183; PILOTÉS</text>
+    </g>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="22" y="52" width="168" height="52" rx="7"/>
+      <rect x="206" y="52" width="168" height="52" rx="7"/>
+      <rect x="390" y="52" width="168" height="52" rx="7"/>
+      <rect x="22" y="356" width="130" height="38" rx="6"/>
+      <rect x="160" y="356" width="130" height="38" rx="6"/>
+      <rect x="298" y="356" width="130" height="38" rx="6"/>
+      <rect x="436" y="356" width="130" height="38" rx="6"/>
+    </g>
+
+    <rect x="100" y="136" width="380" height="62" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+    <rect x="100" y="228" width="380" height="84" rx="8" fill="var(--raised)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="13" font-weight="600" text-anchor="middle">
+      <text x="106" y="74">API HTTP</text>
+      <text x="290" y="74">CLI</text>
+      <text x="474" y="74">Worker</text>
+      <text x="290" y="162">Application</text>
+      <text x="290" y="254">Domaine</text>
+    </g>
+
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="87" y="380">PostgreSQL</text>
+      <text x="225" y="380">Valkey</text>
+      <text x="363" y="380">SMTP</text>
+      <text x="501" y="380">RabbitMQ</text>
+    </g>
+
+    <g fill="var(--muted)" font-size="11" text-anchor="middle">
+      <text x="106" y="91">FastAPI</text>
+      <text x="290" y="91">click</text>
+      <text x="474" y="91">consumer RabbitMQ</text>
+      <text x="290" y="181">use cases &#183; DTO &#183; ports techniques</text>
+      <text x="290" y="274">entités &#183; value objects &#183; ports métier</text>
+    </g>
+
+    <text x="290" y="295" fill="var(--accent)" font-size="11.5" font-weight="600" text-anchor="middle">Python pur &#183; aucun framework</text>
+
+    <g stroke="var(--muted)" stroke-width="1.5" marker-end="url(#f1)">
+      <line x1="106" y1="104" x2="106" y2="134"/>
+      <line x1="290" y1="104" x2="290" y2="134"/>
+      <line x1="474" y1="104" x2="474" y2="134"/>
+      <line x1="290" y1="198" x2="290" y2="226"/>
+    </g>
+
+    <path d="M 540 344 L 540 167 L 484 167" fill="none" stroke="var(--muted)"
+          stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f1)"/>
+    <text x="556" y="256" fill="var(--muted)" font-size="10.5" text-anchor="middle"
+          transform="rotate(-90 556 256)">implémentent les ports</text>
+  </g>
+</svg>
+</figure>
+
+<p>Les flèches pleines sont les <code>import</code>. La flèche pointillée rappelle
+que les adaptateurs driven <strong>dépendent</strong> des ports (ils les
+implémentent) : le sens de la dépendance est inversé par rapport au sens de
+l'appel. À l'exécution, l'application appelle la base de données ; à la
+compilation, c'est la base de données qui dépend de l'interface définie plus au
+centre.</p>
+
+<h2 id="les-quatre-couches-de-ce-projet">Les quatre couches de ce projet<a class="anchor" href="#les-quatre-couches-de-ce-projet" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Couche</th><th>Rôle</th><th>Dépend de</th></tr></thead>
+  <tbody>
+    <tr><td><code>domain/</code></td><td>Le cœur : entités, value objects, ports métier, exceptions</td><td>rien (Python pur)</td></tr>
+    <tr><td><code>application/</code></td><td>Use cases, DTO, ports techniques</td><td><code>domain/</code></td></tr>
+    <tr><td><code>infrastructure/</code></td><td>Adaptateurs driven : SQLAlchemy, Valkey, SMTP, RabbitMQ, config</td><td><code>application/</code>, <code>domain/</code></td></tr>
+    <tr><td><code>presentation/</code></td><td>Adaptateurs driving : API HTTP, CLI, worker</td><td>tout le reste</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>Nuance utile</strong>
+  « Hexagonale » ne prescrit pas <em>quatre</em> couches. Cockburn décrit deux
+  zones (dedans / dehors) et des ports. Le découpage en quatre couches vient
+  plutôt de la <em>Clean Architecture</em> de Robert C. Martin, et il se marie
+  bien avec l'hexagone. Ne confonds pas la règle (une) et le découpage (un choix).
+</div>
+
+<h2 id="driving-vs-driven--les-deux-côtés-de-lhexagone">Driving vs driven : les deux côtés de l'hexagone<a class="anchor" href="#driving-vs-driven--les-deux-côtés-de-lhexagone" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Un adaptateur <strong>driving</strong> (pilotant) déclenche l'application.
+      Ce projet en a <strong>trois</strong> : l'API HTTP, le CLI
+      (<code>presentation/cli/</code>) et le worker RabbitMQ
+      (<code>presentation/worker/</code>).</li>
+  <li>Un adaptateur <strong>driven</strong> (piloté) est appelé par l'application :
+      PostgreSQL, Valkey, SMTP, le broker.</li>
+</ul>
+
+<p>Le point clé : un use case ne connaît ni l'adaptateur qui l'appelle, ni celui
+qui le sert. C'est exactement pour ça que <code>CreateUser</code> est réutilisé
+tel quel par l'API <strong>et</strong> par le CLI de ce projet, sans une ligne
+d'adaptation.</p>
+
+<p>Un même outil peut d'ailleurs apparaître des deux côtés : RabbitMQ est
+<strong>driven</strong> quand <code>ShareTask</code> y publie un message, et
+<strong>driving</strong> quand le worker consomme ce message pour déclencher
+<code>NotifyTaskShared</code>.</p>
+
+<h2 id="comment-on-la-vérifie-ici">Comment on la vérifie ici<a class="anchor" href="#comment-on-la-vérifie-ici" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Une règle d'architecture qui n'est pas vérifiée automatiquement se dégrade en
+quelques mois. La vérification naïve est un <code>grep</code> :</p>
+
+<div class="snippet" data-lang="bash"><pre><code>grep -rE "fastapi|sqlalchemy|pydantic" src/task_manager/domain/   # &rarr; doit être vide</code></pre></div>
+
+<p>C'est un bon réflexe de contrôle rapide, mais ce n'est <strong>pas</strong> la
+source de vérité de ce projet : un <code>grep</code> ne voit pas les imports
+<strong>transitifs</strong> (un module du domaine qui importe un module « pur »
+qui, lui, importe SQLAlchemy) et produit des faux positifs sur des commentaires.</p>
+
+<p>La vraie garantie est <strong>import-linter</strong>, configuré dans
+<code>pyproject.toml</code> (<code>[tool.importlinter]</code>), qui analyse le
+graphe d'imports réel :</p>
+
+<div class="snippet" data-lang="bash"><pre><code>make imports          # ou : uv run lint-imports</code></pre></div>
+
+<p>Deux contrats sont déclarés :</p>
+
+<ol>
+  <li><strong><code>layers</code></strong> &mdash; l'empilement
+      <code>presentation → infrastructure → application → domain</code>. Interdit
+      par exemple qu'<code>application/</code> importe
+      <code>infrastructure/</code>.</li>
+  <li><strong><code>forbidden</code></strong> &mdash; aucun de
+      <code>fastapi</code>, <code>sqlalchemy</code>, <code>pydantic</code>,
+      <code>pydantic_settings</code>, <code>starlette</code> ne doit être
+      atteignable depuis <code>task_manager.domain</code>, même indirectement.</li>
+</ol>
+
+<p>En cas de violation, l'outil affiche la chaîne d'imports fautive avec le
+numéro de ligne :</p>
+
+<div class="snippet" data-lang="console"><pre><code>Architecture hexagonale (dépendances vers l'intérieur) KEPT
+Domaine sans framework BROKEN
+
+Contracts: 1 kept, 1 broken.
+
+----------------
+Broken contracts
+----------------
+
+Domaine sans framework
+----------------------
+
+task_manager.domain is not allowed to import sqlalchemy:
+
+-   task_manager.domain.task.entities -&gt; sqlalchemy (l.10)</code></pre></div>
+
+<p>Il tourne dans <code>make lint</code>, en pre-commit et en CI. <strong>C'est là
+que la règle de dépendance cesse d'être une intention.</strong></p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Vérification de l'archi</td><td>La règle doit être testable, pas seulement documentée</td><td>import-linter (2 contrats) en pre-commit + CI</td></tr>
+    <tr><td>Nombre de couches</td><td>Non prescrit (dedans / dehors)</td><td>4 couches, héritées de la Clean Architecture</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="ce-que-ça-tapporte-concrètement">Ce que ça t'apporte concrètement<a class="anchor" href="#ce-que-ça-tapporte-concrètement" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Testabilité</strong> &mdash; le domaine se teste sans base ni HTTP,
+      en millisecondes (72 tests unitaires de domaine dans ce projet, quasi
+      instantanés).</li>
+  <li><strong>Remplaçabilité</strong> &mdash; ce template est passé de SQLite à
+      PostgreSQL : seuls la config, le moteur SQLAlchemy et les tests ont changé.
+      Zéro ligne de <code>domain/</code> ni d'<code>application/</code>.</li>
+  <li><strong>Réutilisation des cas d'usage</strong> &mdash; <code>CreateUser</code>
+      sert l'API et le CLI.</li>
+  <li><strong>Lisibilité</strong> &mdash; les règles métier se lisent sans la
+      technique autour.</li>
+</ul>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Une seule règle : les dépendances pointent vers l'intérieur.</li>
+  <li>Le cœur ne connaît pas les implémentations, mais il <strong>déclare ses
+      besoins</strong> via des ports (inversion de dépendance).</li>
+  <li>« Port » = interface, « adaptateur » = implémentation. Driving = pilote,
+      driven = piloté. Un même outil peut être les deux.</li>
+  <li>Une règle d'architecture non automatisée se dégrade : ici, import-linter.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li><code>domain/user/value_objects.py</code> importe
+        <code>email_validator</code>, une bibliothèque tierce. Est-ce une
+        violation de la règle de dépendance ? Justifie &mdash; et regarde le
+        contrat <code>forbidden</code> de <code>pyproject.toml</code> pour
+        vérifier.</li>
+    <li>Un collègue place <code>TaskRepository</code> (l'interface) dans
+        <code>infrastructure/</code> et fait importer ce module par
+        <code>application/</code>. Quel contrat import-linter casse, et quelle
+        capacité concrète perd-on ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-01">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./00-le-probleme.html">&larr; 00. Le problème</a>
+  <a href="./02-ou-vit-une-regle.html">02. Où vit une règle ? &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

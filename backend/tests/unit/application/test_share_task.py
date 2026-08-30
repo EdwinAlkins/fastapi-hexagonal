@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from task_manager.application.task.dto import ShareTaskNotification
 from task_manager.application.task.use_cases.share_task import ShareTask
 from task_manager.domain.task.entities import Task
 from task_manager.domain.task.exceptions import TaskNotFound
@@ -29,15 +30,16 @@ class TestShareTask:
             body="Corps",
         )
 
-        assert len(publisher.published) == 1
-        routing_key, payload = publisher.published[0]
-        assert routing_key == "task.shared"
-        assert payload == {
-            "task_id": str(task.id),
-            "user_ids": ["u1", "u2"],
-            "subject": "Sujet",
-            "body": "Corps",
-        }
+        assert publisher.published == [
+            ShareTaskNotification(
+                task_id=str(task.id),
+                user_ids=["u1", "u2"],
+                subject="Sujet",
+                body="Corps",
+            )
+        ]
+        # Le type d'événement est porté par la classe, pas par le site d'appel.
+        assert ShareTaskNotification.name == "task.shared"
 
     async def test_raises_and_publishes_nothing_when_task_missing(self) -> None:
         publisher = RecordingPublisher()

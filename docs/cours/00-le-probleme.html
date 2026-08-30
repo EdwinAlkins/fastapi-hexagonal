@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>00. Le problème &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Pourquoi cette architecture existe : le code métier qui se dissout dans les détails techniques, les cinq symptômes, et la même chose réorganisée.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html" aria-current="page"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>00. Le problème</h1>
+  <p class="lede">Pourquoi cette architecture existe. Sans ce chapitre, tout le
+  reste ressemble à de la cérémonie.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Dans une application mal structurée, le code
+  métier finit facilement par se dissoudre dans les détails techniques. On ne
+  s'en aperçoit pas en écrivant, mais en essayant de tester, de changer un outil,
+  ou simplement de retrouver une règle six mois plus tard.
+</div>
+
+<p>Avant de présenter une solution, il faut ressentir le problème. Sinon
+l'architecture ressemble à de la cérémonie gratuite &mdash; et pour un projet
+simple, elle l'est effectivement
+(<a href="./13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">chapitre 11</a>).</p>
+
+<h2 id="le-code-qui-paraît-normal">Le code qui paraît normal<a class="anchor" href="#le-code-qui-paraît-normal" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Voici une version « directe » de la création d'une tâche. Elle fonctionne,
+elle est courte, et elle est écrite comme ça dans énormément de projets :</p>
+
+<div class="snippet" data-lang="python"><pre><code>@router.post("/tasks")
+async def create_task(payload: CreateTaskRequest, db: AsyncSession = Depends(get_db)):
+    user = await db.get(UserModel, payload.owner_id)
+    if user is None:
+        raise HTTPException(404, "user introuvable")
+    if not payload.title.strip():
+        raise HTTPException(422, "titre vide")
+
+    task = TaskModel(
+        id=uuid4(),
+        owner_id=payload.owner_id,
+        title=payload.title.strip(),
+        status="todo",
+        created_at=datetime.now(UTC),
+    )
+    db.add(task)
+    await db.commit()
+    return task</code></pre></div>
+
+<p>Rien n'est absurde ici. Le problème n'est pas ce qu'on voit, c'est ce qui
+devient impossible.</p>
+
+<h2 id="ce-qui-casse-ensuite">Ce qui casse ensuite<a class="anchor" href="#ce-qui-casse-ensuite" aria-label="Lien vers cette section">#</a></h2>
+
+<p><strong>1. Les règles métier n'existent nulle part.</strong> « Un titre ne
+peut pas être vide » est une règle de l'entreprise. Ici elle vit dans un router
+HTTP. Le jour où une commande CLI, un import CSV ou un worker crée aussi des
+tâches, la règle est soit dupliquée, soit oubliée. Elle n'a <strong>pas de
+domicile</strong>.</p>
+
+<p><strong>2. Tester une règle exige toute la pile.</strong> Pour vérifier qu'un
+titre vide est refusé, il faut un client HTTP, une session, une base. Trois
+secondes de setup pour tester une comparaison de chaîne. Résultat prévisible :
+on ne teste pas.</p>
+
+<p><strong>3. « Terminer une tâche » n'est écrit nulle part.</strong> Chaque
+endroit qui veut terminer une tâche fait <code>task.status = "done"</code> et
+espère penser à <code>completed_at</code>. La règle « on ne termine pas deux
+fois » n'a aucun endroit où être garantie ; elle est réimplémentée,
+partiellement, à chaque appel.</p>
+
+<p><strong>4. Changer d'outil devient un chantier.</strong> Passer de SQLite à
+PostgreSQL, remplacer FastAPI, changer de bibliothèque de validation : tout le
+code métier est concerné, parce qu'il n'a jamais été séparé.</p>
+
+<p><strong>5. On ne sait plus où lire le métier.</strong> La question « quelles
+sont les règles d'une tâche ? » n'a pas de réponse par un fichier. Il faut lire
+les routers, les modèles ORM, quelques services, et deviner.</p>
+
+<h2 id="la-même-chose-réorganisée">La même chose, réorganisée<a class="anchor" href="#la-même-chose-réorganisée" aria-label="Lien vers cette section">#</a></h2>
+
+<p>L'architecture de ce projet répond à ces cinq points en donnant un
+<strong>domicile</strong> à chaque type de décision :</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/value_objects.py — la règle du titre, une fois, pour tous les appelants
+class TaskTitle:
+    def __post_init__(self) -&gt; None:
+        if not self.value.strip():
+            raise EmptyTitle()
+
+# domain/task/entities.py — la règle de transition d'état, protégée par l'entité
+class Task:
+    def complete(self) -&gt; None:
+        if self.status is TaskStatus.DONE:
+            raise TaskAlreadyCompleted()
+        self.status = TaskStatus.DONE
+        self.completed_at = _now()
+
+# application/task/use_cases/create_task.py — l'enchaînement, sans règle métier
+class CreateTask:
+    async def execute(self, command: CreateTaskCommand) -&gt; TaskDTO:
+        owner_id = UserId.from_string(command.owner_id)
+        if not await self._users.exists(owner_id):
+            raise UserNotFound(str(owner_id))
+        task = Task.create(owner_id=owner_id, title=TaskTitle(command.title))
+        await self._tasks.save(task)
+        return TaskDTO.from_entity(task)</code></pre></div>
+
+<p>Le router, lui, ne fait plus que traduire du HTTP. Il ne contient plus une
+seule décision métier.</p>
+
+<p>C'est plus de fichiers. C'est le <strong>coût</strong>, assumé. Le bénéfice :
+les règles ont une adresse, elles se testent en millisecondes, et elles
+s'appliquent quel que soit l'appelant &mdash; l'API, le CLI
+(<code>task-manager-cli create-user</code>) ou le worker RabbitMQ de ce projet.</p>
+
+<h2 id="ce-que-ce-cours-essaie-vraiment-de-tapprendre">Ce que ce cours essaie vraiment de t'apprendre<a class="anchor" href="#ce-que-ce-cours-essaie-vraiment-de-tapprendre" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Pas une liste de dossiers à créer. Une question à te poser en permanence :</p>
+
+<blockquote>
+  <p><strong>Cette décision, à qui appartient-elle ?</strong></p>
+</blockquote>
+
+<p>Tout le reste &mdash; ports, agrégats, DTO, mappers, composition root &mdash;
+n'est que la machinerie qui rend la réponse à cette question exécutable. Le
+<a href="./02-ou-vit-une-regle.html">chapitre 02</a> y est entièrement consacré.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Le vrai problème n'est pas esthétique : c'est <strong>l'absence de
+      domicile</strong> pour les règles métier.</li>
+  <li>Les symptômes : règles dupliquées, tests lents ou absents, invariants non
+      garantis, outils non remplaçables, métier illisible.</li>
+  <li>La solution coûte des fichiers et de l'indirection. Elle se rentabilise
+      quand le métier est riche et le projet durable &mdash; pas toujours.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Dans le premier extrait, la vérification <code>payload.title.strip()</code>
+        est faite dans le router. Cite <strong>deux</strong> chemins d'exécution
+        de ce projet qui ne passeraient jamais par ce router &mdash; et pour
+        lesquels la règle serait donc absente.</li>
+    <li>Le premier extrait fait <code>await db.commit()</code> dans le handler.
+        Qu'est-ce que ça rend impossible si demain la création d'une tâche doit
+        aussi débiter un quota utilisateur dans la même opération ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-00">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./index.html">&larr; Introduction</a>
+  <a href="./01-regle-de-dependance.html">01. La règle de dépendance &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

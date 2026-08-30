@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09. Lire sans passer par le domaine &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Les agrégats protègent les écritures. En lecture, on court-circuite le domaine : query service, SQL exact, DTO plat. N+1, charge base, et la forme légère de CQRS.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html" aria-current="page"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>09. Lire sans passer par le domaine</h1>
+  <p class="lede">Le contrepoint de tout ce qui précède &mdash; et l'endroit où
+  beaucoup d'architectures propres deviennent lentes.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Les agrégats sont conçus pour protéger les
+  <strong>écritures</strong>. Pour lire, ils sont souvent le mauvais outil :
+  sur-lecture, allers-retours, N+1, et une base qui sature pour afficher trois
+  colonnes. Dans ces cas-là, on <strong>court-circuite le domaine</strong> : un
+  <em>query service</em> fait le SQL exact et rend un DTO plat. Écriture stricte
+  d'un côté, lecture rapide de l'autre &mdash; la forme légère de CQRS.
+</div>
+
+<h2 id="le-malentendu-qui-coûte-cher">Le malentendu qui coûte cher<a class="anchor" href="#le-malentendu-qui-coûte-cher" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Quand on a passé du temps à construire un domaine soigné, un réflexe
+s'installe : <strong>tout doit passer par lui</strong>. C'est vrai en écriture.
+C'est faux en lecture, et s'y accrocher produit des systèmes corrects et
+inutilisables.</p>
+
+<p>Un agrégat est optimisé pour une seule chose : garantir des invariants au
+moment d'écrire. Il faut donc réunir <strong>tout ce dont ces invariants
+dépendent</strong>, et reconstruire le modèle métier &mdash; value objects compris
+&mdash; avant de pouvoir décider quoi que ce soit. Ce contrat a un prix, et ce
+prix n'achète rien quand on affiche un tableau : il n'y a aucun invariant à faire
+respecter.</p>
+
+<p>L'écriture et la lecture n'ont tout simplement pas les mêmes besoins :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Écriture</th><th>Lecture</th></tr></thead>
+  <tbody>
+    <tr><td>Objectif</td><td>Protéger les invariants</td><td>Servir un écran, vite</td></tr>
+    <tr><td>Forme utile</td><td>Agrégat cohérent</td><td>Projection à plat</td></tr>
+    <tr><td>Granularité</td><td>L'agrégat entier</td><td>Exactement les champs affichés</td></tr>
+    <tr><td>Traverse les frontières d'agrégats ?</td><td>Non &mdash; les invariants sont en jeu</td><td>Oui &mdash; aucun invariant n'est engagé</td></tr>
+    <tr><td>Ce qui compte</td><td>La justesse</td><td>Le temps de réponse et la charge base</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="ce-que-coûte-vraiment-une-lecture-par-les-agrégats">Ce que coûte vraiment une lecture par les agrégats<a class="anchor" href="#ce-que-coûte-vraiment-une-lecture-par-les-agrégats" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Prenons un écran banal : <strong>50 tâches avec le nom de leur
+propriétaire</strong>.</p>
+
+<h3 id="par-les-agrégats">Par les agrégats<a class="anchor" href="#par-les-agrégats" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="snippet" data-lang="python"><pre><code>tasks = await task_repository.list(limit=50)          # 1 requête
+for task in tasks:
+    user = await user_repository.get(task.owner_id)   # 50 requêtes  ← N+1
+    ...</code></pre></div>
+
+<p>Le compte : <strong>51 requêtes</strong> pour afficher 4 colonnes. Chaque
+<code>Task</code> reconstruit un <code>TaskId</code>, un <code>UserId</code>, un
+<code>TaskTitle</code>, un <code>TaskStatus</code> ; chaque <code>User</code>
+reconstruit un <code>UserName</code> et un <code>Email</code> &mdash; dont on
+n'affichera que le nom. Puis tout est reconverti en <code>str</code> dans un DTO
+de sortie.</p>
+
+<p>C'est le <strong>N+1</strong>
+(<a href="./05-relations-entre-agregats.html#le-piège-du-n1-côté-lecture">ch. 05</a>),
+vu du côté applicatif. Et il est pernicieux : il ne se voit pas en développement
+avec dix lignes de données, il se voit en production à 500 requêtes par seconde,
+quand le pool de connexions est saturé et que la base passe son temps à répondre à
+des micro-requêtes.</p>
+
+<div class="warn">
+  <strong>Le point important n'est pas la lenteur d'une page</strong>
+  C'est qu'une lecture mal conçue consomme des connexions et du CPU base qui
+  manquent alors aux <strong>écritures</strong> &mdash; celles-là mêmes qu'on a
+  tant soigné à rendre correctes. Une lecture négligée finit par dégrader le chemin
+  critique.
+</div>
+
+<h3 id="par-un-query-service">Par un query service<a class="anchor" href="#par-un-query-service" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="snippet" data-lang="sql"><pre><code>SELECT t.id, t.title, t.status, u.name AS owner_name
+FROM tasks t
+JOIN users u ON u.id = t.owner_id
+ORDER BY t.created_at DESC
+LIMIT 50;</code></pre></div>
+
+<p><strong>Une requête.</strong> Aucun agrégat construit, aucun value object
+alloué, exactement les quatre colonnes affichées. La base fait ce qu'elle sait
+faire de mieux.</p>
+
+<h3 id="la-mesure-pas-lintuition">La mesure, pas l'intuition<a class="anchor" href="#la-mesure-pas-lintuition" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Ce dépôt implémente les <strong>deux</strong> chemins, et un test d'intégration
+compte les requêtes SQL réellement émises en s'abonnant à l'événement SQLAlchemy
+<code>before_cursor_execute</code>. Sur <strong>200 tâches réparties entre 10
+propriétaires</strong>, contre un vrai PostgreSQL :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Chemin</th><th>Requêtes SQL</th><th>Durée</th></tr></thead>
+  <tbody>
+    <tr><td>Par les agrégats (<code>list</code> puis un <code>get</code> par tâche)</td><td><strong>201</strong></td><td>84,6&nbsp;ms</td></tr>
+    <tr><td>Par le query service</td><td><strong>1</strong></td><td>6,6&nbsp;ms</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>201× moins de requêtes, 12,8× plus rapide</strong> &mdash; et l'écart se
+creuse avec le volume, puisque l'un est linéaire en nombre d'allers-retours et
+l'autre non.</p>
+
+<p>Deux tests verrouillent ces chiffres dans
+<code>tests/integration/api/test_exports_api.py</code> : l'un affirme que le query
+service émet <strong>exactement 1</strong> <code>SELECT</code>, l'autre que le
+chemin par agrégats en émet <strong>1&nbsp;+&nbsp;N</strong>. Le second est
+inhabituel &mdash; il teste un défaut &mdash; mais c'est ce qui empêche la
+démonstration de se périmer en silence.</p>
+
+<h2 id="le-geste--jeter-le-domaine-délibérément">Le geste : jeter le domaine, délibérément<a class="anchor" href="#le-geste--jeter-le-domaine-délibérément" aria-label="Lien vers cette section">#</a></h2>
+
+<p>C'est la partie contre-intuitive. Sur ce chemin de lecture, on
+<strong>abandonne volontairement</strong> :</p>
+
+<ul>
+  <li><strong>les entités et les value objects</strong> &mdash; on ne construit ni
+      <code>TaskTitle</code> ni <code>Email</code> ;</li>
+  <li><strong>les invariants</strong> &mdash; ils ne servent à rien : on ne modifie
+      rien ;</li>
+  <li><strong>la séparation des agrégats à la lecture</strong> &mdash; on joint
+      <code>tasks</code> et <code>users</code> sans scrupule, puisqu'aucun invariant
+      de l'un ou de l'autre n'est engagé ;</li>
+  <li><strong>les repositories</strong> &mdash; on ne passe pas par
+      <code>TaskRepository</code>.</li>
+</ul>
+
+<p>Ce n'est pas une entorse honteuse à l'architecture : <strong>c'est
+l'architecture qui fonctionne comme prévu.</strong> Les invariants existent pour
+empêcher d'écrire un état incohérent ; une projection de lecture n'en engage
+aucun. Payer le prix d'une protection qui ne protège rien ici est une erreur de
+conception, pas une preuve de rigueur.</p>
+
+<p>Le corollaire vaut d'être dit : ce n'est pas le mot « lecture » qui autorise le
+raccourci. Une lecture qui sert à <strong>décider d'une écriture</strong> &mdash;
+charger une tâche pour la compléter &mdash; repasse par l'agrégat, parce que la
+décision, elle, engage bien les invariants.</p>
+
+<p>La règle qui reste, elle, est absolue :</p>
+
+<blockquote>
+  <p><strong>Une écriture repasse toujours par les agrégats.</strong> Un query
+  service est en lecture seule, sans exception. Le jour où il écrit, les invariants
+  ne valent plus rien nulle part.</p>
+</blockquote>
+
+<h2 id="anatomie-dun-query-service">Anatomie d'un query service<a class="anchor" href="#anatomie-dun-query-service" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Ce dépôt en implémente un, qui sert l'export global des tâches avec leur
+propriétaire. Le <strong>port</strong>, en
+<code>application/task/queries.py</code> :</p>
+
+<div class="snippet" data-lang="python"><pre><code>@dataclass(frozen=True, slots=True)
+class TaskWithOwner:          # DTO de LECTURE : plat, des types simples
+    task_id: str
+    title: str
+    description: str | None    # ← porté pour l'import, jamais affiché (ch. 10)
+    status: str
+    created_at: datetime
+    completed_at: datetime | None
+    owner_id: str
+    owner_name: str
+    owner_email: str
+
+
+class TaskQueryPort(ABC):
+    """Chemin de LECTURE. Aucune écriture, sans exception."""
+
+    @abstractmethod
+    def stream_with_owner(self) -&gt; AsyncIterator[TaskWithOwner]: ...
+
+    @abstractmethod
+    async def count(self) -&gt; int: ...</code></pre></div>
+
+<p>L'<strong>implémentation</strong>, en
+<code>infrastructure/persistence/task/queries.py</code> :</p>
+
+<div class="snippet" data-lang="python"><pre><code>async def stream_with_owner(self) -&gt; AsyncIterator[TaskWithOwner]:
+    statement = (
+        select(
+            TaskModel.id, TaskModel.title, TaskModel.description, TaskModel.status,
+            TaskModel.created_at, TaskModel.completed_at,
+            UserModel.id.label("owner_id"),
+            UserModel.name.label("owner_name"),
+            UserModel.email.label("owner_email"),
+        )
+        .join(UserModel, TaskModel.owner_id == UserModel.id)
+        .order_by(TaskModel.created_at)
+        .execution_options(yield_per=500)     # curseur serveur, mémoire constante
+    )
+    result = await self._session.stream(statement)
+    async for row in result:
+        yield TaskWithOwner(task_id=str(row.id), ...)</code></pre></div>
+
+<p>Cinq points de discipline :</p>
+
+<ul>
+  <li><strong>L'implémentation vit dans l'infrastructure</strong>, comme tout ce
+      qui parle SQL.</li>
+  <li><strong>Elle ne renvoie jamais d'entités</strong>, seulement des DTO de
+      lecture &mdash; sinon on réintroduit la navigation entre agrégats par la
+      porte de derrière.</li>
+  <li><strong>Elle est en lecture seule.</strong> Aucun <code>INSERT</code>, aucun
+      <code>UPDATE</code>, jamais.</li>
+  <li><strong>Elle peut traverser plusieurs frontières d'agrégats</strong>, parce
+      qu'elle ne cherche ni à faire respecter ni à modifier leurs invariants : elle
+      construit une <strong>vue de lecture</strong> adaptée au besoin. Le critère
+      n'est pas « lecture = libre, écriture = interdit », c'est <em>est-ce que cette
+      opération engage les invariants des agrégats qu'elle touche ?</em>. Ce qu'on
+      veut éviter, c'est la reconstruction artificielle de plusieurs agrégats dans
+      le modèle métier pour produire un écran.</li>
+  <li><strong>Elle est bornée &mdash; ou elle diffuse.</strong> Une lecture non
+      bornée qui matérialise tout est une panne en attente. Ici on a choisi la
+      seconde voie : un flux, avec <code>yield_per</code>, dont la mémoire ne dépend
+      pas du volume.</li>
+</ul>
+
+<h3 id="pas-de-use-case--le-chemin-de-lecture-est-plus-court">Pas de use case : le chemin de lecture est plus court<a class="anchor" href="#pas-de-use-case--le-chemin-de-lecture-est-plus-court" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le router appelle le port <strong>directement</strong>. Il n'y a rien à
+orchestrer : ni règle, ni transaction à ouvrir, ni coordination entre agrégats.
+Ajouter un use case ne ferait qu'insérer une indirection vide.</p>
+
+<div class="snippet" data-lang="text"><pre><code>écriture :  router → use case → domaine → repository     (4 niveaux)
+lecture  :  router → query service                        (2 niveaux)</code></pre></div>
+
+<p>Cette asymétrie est visible dans l'arborescence, et c'est voulu : la lecture n'a
+pas besoin des mêmes garanties, elle ne doit donc pas payer la même cérémonie.</p>
+
+<h3 id="streamer-plutôt-que-paginer">Streamer plutôt que paginer<a class="anchor" href="#streamer-plutôt-que-paginer" aria-label="Lien vers cette section">#</a></h3>
+
+<p>L'export est diffusé en <strong>NDJSON</strong> &mdash; un objet JSON par ligne
+&mdash; dans une <code>StreamingResponse</code>. C'est ce que le chemin par
+agrégats ne peut structurellement pas offrir : il doit tout matérialiser avant de
+rendre la main.</p>
+
+<div class="warn">
+  <strong>Le prix du streaming</strong>
+  <p>Le statut HTTP part avec le
+  <strong>premier octet</strong>. Si la base tombe au milieu du flux, on ne peut
+  plus renvoyer un 500 &mdash; le client reçoit un flux tronqué avec un
+  <code>200 OK</code>. Un export NDJSON se valide donc en comparant le nombre de
+  lignes reçues à un compte annoncé, jamais en se fiant au code de statut. C'est
+  exactement ce que fait le bouton d'export du frontend.</p>
+</div>
+
+<p>Un détail non évident, vérifié plutôt que supposé : avec une
+<code>StreamingResponse</code>, la dépendance <code>yield</code> qui fournit la
+session reste <strong>ouverte pendant toute la consommation du corps</strong>.
+Sans cette propriété, le curseur serait fermé avant la fin du flux. Le curseur vit
+ainsi <em>dans</em> la transaction de la requête, ce qui reste compatible avec
+PgBouncer en mode transaction &mdash; seuls les curseurs <code>WITH HOLD</code>,
+qui survivent au commit, y sont interdits.</p>
+
+<h3 id="faut-il-un-port-">Faut-il un port ?<a class="anchor" href="#faut-il-un-port-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Deux écoles, et les deux se défendent.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Sans port</th><th>Avec port</th></tr></thead>
+  <tbody>
+    <tr><td>Le router dépend de…</td><td>la classe concrète en infrastructure</td><td>une interface en <code>application/</code></td></tr>
+    <tr><td>Cérémonie</td><td>minimale</td><td>une interface de plus</td></tr>
+    <tr><td>Test du router</td><td>exige une vraie base</td><td>doublure en mémoire possible</td></tr>
+    <tr><td>Cohérence avec ce dépôt</td><td>rompt le motif (tout passe par un port)</td><td>conforme</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Ce projet a tranché pour le <strong>port</strong> : la thèse du dépôt est que
+la règle de dépendance est vérifiée et uniforme, et un router qui importerait
+directement une classe SQLAlchemy serait le seul endroit à rompre le motif.
+Ailleurs, sauter le port est parfaitement légitime &mdash; un query service
+<em>est</em> déjà le modèle de lecture, et l'abstraire n'apporte parfois rien.</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Chemin de lecture</td><td>Peut court-circuiter les agrégats</td><td>Agrégats pour les listes simples ; <strong>query service</strong> pour l'export joint (<a href="#et-ce-projet-">voir plus bas</a>)</td></tr>
+    <tr><td>Abstraction des lectures</td><td>Non prescrite</td><td>Port en <code>application/</code>, implémentation en <code>infrastructure/</code> (par cohérence)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="quand-basculer--le-tableau-de-décision">Quand basculer ? Le tableau de décision<a class="anchor" href="#quand-basculer--le-tableau-de-décision" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Situation</th><th>Chemin</th></tr></thead>
+  <tbody>
+    <tr><td>Créer, modifier, supprimer</td><td><strong>Agrégats</strong>, toujours</td></tr>
+    <tr><td>Charger un objet <strong>pour le modifier</strong></td><td><strong>Agrégats</strong> (il faut les invariants)</td></tr>
+    <tr><td>Afficher un objet seul, quelques champs</td><td>Agrégats &mdash; le coût est négligeable</td></tr>
+    <tr><td>Afficher une <strong>liste</strong></td><td>Query service dès que la liste est longue ou fréquente</td></tr>
+    <tr><td>Afficher des données de <strong>deux agrégats</strong></td><td><strong>Query service</strong></td></tr>
+    <tr><td>Compter, agréger, faire des statistiques</td><td><strong>Query service</strong> (<code>COUNT</code>, <code>GROUP BY</code> &mdash; jamais en Python)</td></tr>
+    <tr><td>Exporter, alimenter un rapport</td><td><strong>Query service</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le signal le plus fiable : <strong>tu écris une boucle Python qui refait ce
+qu'un <code>JOIN</code> ou un <code>GROUP BY</code> ferait mieux.</strong> À ce
+moment-là, la base est en train de travailler pour rien.</p>
+
+<h2 id="et-cqrs-alors-">Et CQRS, alors ?<a class="anchor" href="#et-cqrs-alors-" aria-label="Lien vers cette section">#</a></h2>
+
+<p><strong>CQRS</strong> = <em>Command Query Responsibility Segregation</em> :
+séparer le modèle d'<strong>écriture</strong> (commandes) du modèle de
+<strong>lecture</strong> (requêtes).</p>
+
+<p>Attention à une confusion très répandue :</p>
+
+<blockquote>
+  <p><strong>Query service ≠ CQRS.</strong></p>
+</blockquote>
+
+<p>Ajouter un service de lecture est une bonne pratique locale. CQRS, au sens
+fort, c'est <strong>deux modèles distincts</strong> &mdash; parfois deux bases,
+alimentées par des projections, avec de la cohérence à terme entre les deux. C'est
+une architecture lourde, justifiée par des besoins de scalabilité ou des écarts
+massifs entre lecture et écriture.</p>
+
+<p>Il y a un continuum, et il faut savoir où on se situe :</p>
+
+<div class="snippet" data-lang="text"><pre><code>1. Tout passe par les agrégats            ← le point de départ
+2. + query services pour les lectures     ← ce projet aujourd'hui
+3. + modèles de lecture dénormalisés      ← CQRS « léger »
+4. + stockage de lecture séparé, projeté  ← CQRS complet
+5. + événements comme source de vérité    ← Event Sourcing (autre sujet)</code></pre></div>
+
+<p>La grande majorité des applications s'arrêtent au <strong>niveau 2</strong> et
+ont raison. C'est le meilleur rapport bénéfice/coût de toute cette liste :
+quelques classes de lecture, aucune infrastructure supplémentaire, aucune
+cohérence à terme à gérer. Monter d'un cran doit répondre à un problème
+<strong>mesuré</strong>, pas à une envie.</p>
+
+<h2 id="et-ce-projet-">Et ce projet ?<a class="anchor" href="#et-ce-projet-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Il est au <strong>niveau 2</strong>, et de façon délibérément minimale :
+<strong>un seul</strong> chemin de lecture, introduit parce qu'un besoin réel
+l'exigeait.</p>
+
+<p>Ce besoin : le frontend a un bouton <strong>« Exporter »</strong> qui télécharge
+toutes les tâches <strong>avec les informations de leur propriétaire</strong>.
+C'est le cas d'école &mdash; deux agrégats joints, volume non borné, aucun
+invariant en jeu. C'est exactement le point de bascule que ce chapitre annonçait ;
+il a été franchi quand il s'est présenté, pas avant.</p>
+
+<p>Le reste du projet est <strong>resté au niveau 1</strong>, et c'est un choix,
+pas un oubli :</p>
+
+<ul>
+  <li><strong>Les trois endpoints de liste</strong> (<code>GET /users</code>,
+      <code>GET /tasks</code>, <code>GET /users/{id}/tasks</code>) passent toujours
+      par les agrégats. Aucun ne joint deux agrégats, donc aucun n'a de N+1 :
+      <code>list_by_owner</code> est un <code>SELECT</code> filtré sur une clé
+      étrangère indexée.</li>
+  <li><strong>Il y a du gaspillage résiduel</strong>, assumé. Chaque ligne y est
+      reconstruite en agrégat complet avec ses value objects, pour être aussitôt
+      reconvertie en DTO de sortie. Invisible à cette échelle.</li>
+  <li><strong><code>ListTasksByOwner</code> fait deux allers-retours</strong> : un
+      <code>exists()</code> sur l'user, puis la liste. C'est le prix de la
+      distinction entre « user inconnu » (404) et « user sans tâche » (liste vide).
+      Un query service le ferait en une requête, avec un <code>LEFT JOIN</code> et
+      un test sur le résultat.</li>
+</ul>
+
+<p>C'est la leçon qui compte plus que le code : <strong>on ne migre pas tout au
+niveau 2 parce qu'on a compris le niveau 2.</strong> On y déplace ce qui le
+justifie, et on mesure. Le dépôt contient les deux états côte à côte, ce qui rend
+la comparaison lisible.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Les agrégats protègent les <strong>écritures</strong>. En lecture, leur
+      contrat coûte sans rien rapporter.</li>
+  <li>Sur un chemin de lecture, on <strong>abandonne délibérément</strong> entités,
+      value objects, invariants et séparation des agrégats. Ce n'est pas une
+      entorse : c'est le bon usage.</li>
+  <li>La règle qui ne bouge pas : <strong>une écriture repasse toujours par les
+      agrégats</strong> &mdash; y compris quand il y en a cent mille
+      (<a href="./10-ecritures-en-masse.html">chapitre 10</a>).</li>
+  <li>Un <strong>query service</strong> fait le SQL exact et rend un <strong>DTO
+      plat</strong>, borné, en lecture seule.</li>
+  <li>Le vrai danger du N+1 n'est pas la page lente, c'est la <strong>charge
+      base</strong> qui manque ensuite aux écritures.</li>
+  <li><strong>Query service ≠ CQRS.</strong> Le niveau 2 du continuum suffit à
+      presque tout le monde.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Un écran affiche « mes 20 dernières tâches + le nom du propriétaire + le
+        nombre total de mes tâches ». <strong>a.</strong> écris la signature du
+        query service et de son DTO ; <strong>b.</strong> combien de requêtes SQL au
+        minimum ? <strong>c.</strong> pourquoi ne pas ajouter cette méthode à
+        <code>TaskRepository</code> ?</li>
+    <li>Un collègue propose que le query service renvoie des entités
+        <code>Task</code> « pour réutiliser le mapper ». Donne les deux raisons de
+        refuser.</li>
+    <li>Sur <code>GET /users/{id}/tasks</code>, on veut supprimer le
+        <code>exists()</code> préalable pour n'avoir qu'une requête. Que perd-on du
+        point de vue de l'appelant HTTP, et comment un query service pourrait-il
+        rendre les deux à la fois ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-09">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./08-transactions-et-erreurs.html">&larr; 08. Transactions &amp; erreurs</a>
+  <a href="./10-ecritures-en-masse.html">10. Écrire en masse &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

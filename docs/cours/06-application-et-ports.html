@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>06. Application &amp; ports &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Un port appartient à la couche qui exprime le besoin. Use cases, DTO neutres, et le piège inverse : quand les traductions deviennent de la cérémonie.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html" aria-current="page"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>06. Application &amp; ports</h1>
+  <p class="lede">Une couche fine qui orchestre &mdash; et la question que presque
+  tous les cours tranchent trop vite : où vit un port ?</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; La couche application <strong>orchestre</strong> :
+  elle enchaîne les appels, ne porte pas les invariants du domaine. Un
+  <strong>port</strong> appartient à la couche qui <em>exprime le besoin</em>
+  &mdash; le domaine pour les repositories, l'application pour le cache, le SMTP
+  ou le broker. Les <strong>DTO</strong> l'isolent des frameworks des deux côtés.
+</div>
+
+<h2 id="les-ports--qui-déclare-le-besoin-">Les ports : qui déclare le besoin ?<a class="anchor" href="#les-ports--qui-déclare-le-besoin-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Un <strong>port</strong> est une interface qui exprime un besoin sans dire
+comment il sera satisfait. La question intéressante est : <strong>dans quelle
+couche le déclarer ?</strong></p>
+
+<p>La réponse tient en une question :</p>
+
+<blockquote>
+  <p><strong>Qui a besoin de ce concept ?</strong></p>
+</blockquote>
+
+<ul>
+  <li>Le concept « je dois pouvoir retrouver une <code>Task</code> par son
+      identité » est exprimé en <strong>termes du domaine</strong> : il parle de
+      <code>Task</code> et de <code>TaskId</code>, pas de lignes ni de tables. Ce
+      projet place donc le port dans <code>domain/task/repository.py</code>.</li>
+  <li>Le concept « je mets certaines lectures en cache » n'appartient à personne
+      dans le métier. Aucun invariant de <code>Task</code> ou de <code>User</code>
+      n'en dépend. C'est une <strong>décision de cas d'usage</strong>. Le port vit
+      dans <code>application/shared/cache.py</code>.</li>
+</ul>
+
+<div class="note">
+  <strong>Attention à la formulation</strong>
+  Ça ne veut <strong>pas</strong> dire que la persistance est une propriété du
+  domaine. Un modèle métier n'a pas besoin d'être persisté pour être juste. Ce que
+  dit ce choix, très classique en DDD, c'est que le <strong>cycle de vie des
+  agrégats</strong> fait partie du modèle que l'application manipule, et que
+  l'abstraction qui le décrit s'exprime dans le vocabulaire du domaine. D'autres
+  architectures, tout aussi cohérentes, placent les ports de persistance dans la
+  couche application.
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Port</th><th>Emplacement</th><th>Pourquoi là</th></tr></thead>
+  <tbody>
+    <tr><td><code>TaskRepository</code>, <code>UserRepository</code></td><td><code>domain/&lt;ctx&gt;/repository.py</code></td><td>Persistance des agrégats : concept du modèle métier</td></tr>
+    <tr><td><code>CachePort</code></td><td><code>application/shared/cache.py</code></td><td>Optimisation de lecture décidée par les use cases</td></tr>
+    <tr><td><code>SMTPSenderPort</code></td><td><code>application/shared/smtp.py</code></td><td>Notification : effet applicatif, pas invariant métier</td></tr>
+    <tr><td><code>EventPublisherPort</code></td><td><code>application/shared/messaging.py</code></td><td>Intégration : idem</td></tr>
+    <tr><td><code>EmailTemplatePort</code></td><td><code>application/shared/html_template/</code></td><td>Rendu du message : détail de présentation</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Emplacement d'un port</td><td>Le port appartient à la couche qui <strong>exprime le besoin</strong></td><td>Repositories dans <code>domain/</code>, ports techniques dans <code>application/shared/</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>C'est le point où beaucoup de cours se trompent</strong> en assénant
+« les ports sont dans le domaine ». Ce serait faux ici : mettre
+<code>CachePort</code> dans <code>domain/</code> signifierait que le modèle métier
+des tâches a une opinion sur le cache. Il n'en a aucune.</p>
+
+<p>Le port de persistance, lui, est bien dans le domaine &mdash; et c'est là toute
+l'<strong>inversion de dépendance</strong> : le domaine possède l'interface,
+l'infrastructure lui obéit.</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/repository.py
+class TaskRepository(ABC):
+    @abstractmethod
+    async def save(self, task: Task) -&gt; None: ...
+    @abstractmethod
+    async def get(self, task_id: TaskId) -&gt; Task: ...
+    @abstractmethod
+    async def list_by_owner(self, owner_id: UserId, *, limit=100, offset=0) -&gt; list[Task]: ...
+    @abstractmethod
+    async def delete(self, task_id: TaskId) -&gt; None: ...
+    @abstractmethod
+    async def exists(self, task_id: TaskId) -&gt; bool: ...</code></pre></div>
+
+<h3 id="ce-quun-port-ne-doit-pas-exposer">Ce qu'un port ne doit pas exposer<a class="anchor" href="#ce-quun-port-ne-doit-pas-exposer" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un port fuit dès qu'il laisse transparaître son implémentation. Deux exemples
+du projet, tous deux commentés dans le code :</p>
+
+<ul>
+  <li><code>EventPublisherPort</code> n'expose que <code>publish</code> &mdash; ni
+      <code>connect</code>, ni <code>close</code>. Le cycle de vie de la connexion
+      AMQP est un détail d'infrastructure, ouvert dans le <code>lifespan</code> de
+      l'API ou au démarrage du worker.</li>
+  <li><strong>Il parle en événement typé, pas en <code>dict</code></strong> :
+      <div class="snippet" data-lang="python"><pre><code>async def publish(self, event: IntegrationEvent) -&gt; None: ...</code></pre></div>
+      Une signature <code>publish(routing_key: str, payload: dict[str, Any])</code>
+      serait déjà une fuite : elle oblige le use case à sérialiser lui-même et à
+      connaître une <em>clé de routage</em>, qui est du vocabulaire AMQP. Ici
+      l'événement porte son propre type
+      (<code>ShareTaskNotification.name = "task.shared"</code>), et c'est
+      l'adaptateur qui décide d'en faire une clé de routage &mdash; un adaptateur
+      Kafka en ferait un topic.</li>
+</ul>
+
+<p>Un port qui exposerait <code>execute(sql: str)</code> ou
+<code>get_session()</code> ne serait pas un port : ce serait SQLAlchemy déguisé.</p>
+
+<h3 id="typé-ou-opaque--le-cas-du-cache">Typé ou opaque ? Le cas du cache<a class="anchor" href="#typé-ou-opaque--le-cas-du-cache" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Une nuance qui surprend : <code>CachePort</code>, lui, parle bien en
+<code>dict</code> JSON-compatible. Est-ce incohérent avec ce qu'on vient de dire ?
+Non &mdash; les deux ports n'ont pas la même nature de contrat.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>EventPublisherPort</code></th><th><code>CachePort</code></th></tr></thead>
+  <tbody>
+    <tr><td>Qui lit la donnée</td><td><strong>un autre process</strong> (le worker)</td><td>le même use case, plus tard</td></tr>
+    <tr><td>Durée de vie</td><td>contrat public, versionné</td><td>éphémère, jetable</td></tr>
+    <tr><td>Changer la forme coûte</td><td>coordonner deux déploiements</td><td>rien : au pire un cache miss</td></tr>
+    <tr><td>Typage utile ?</td><td><strong>oui</strong>, c'est une interface entre composants</td><td>non, ce serait de la cérémonie</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>La règle générale n'est donc pas « toujours typer » ni « toujours
+<code>dict</code> », mais : <strong>un contrat lu par quelqu'un d'autre se type ;
+un détail privé et jetable peut rester opaque.</strong></p>
+
+<h3 id="et-la-pagination--et-le-tri-">Et la pagination ? Et le tri ?<a class="anchor" href="#et-la-pagination--et-le-tri-" aria-label="Lien vers cette section">#</a></h3>
+
+<p><code>list_by_owner(owner_id, *, limit=100, offset=0)</code> : la pagination
+est dans le port. Est-ce une fuite technique ?</p>
+
+<p>Non, mais la frontière mérite d'être nommée. <code>limit</code>/<code>offset</code>
+protègent d'un chargement non borné &mdash; c'est une <strong>policy
+applicative</strong> légitime
+(<a href="./02-ou-vit-une-regle.html#et-les--policies--applicatives-">ch. 02</a>).
+En revanche, <code>ORDER BY created_at DESC NULLS LAST</code> n'a rien à faire
+dans une signature de port : c'est une décision de présentation ou
+d'infrastructure. Si un ordre est <strong>métier</strong> (« les tâches urgentes
+d'abord »), nomme-le comme tel (<code>list_urgent_first</code>) plutôt que
+d'exposer une chaîne SQL.</p>
+
+<h2 id="le-use-case--orchestrer">Le use case : orchestrer<a class="anchor" href="#le-use-case--orchestrer" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Un use case reçoit ses ports à la construction et expose <code>execute</code>.
+Il enchaîne : charger → appeler le domaine → sauvegarder.</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/task/use_cases/complete_task.py
+class CompleteTask:
+    def __init__(self, repository: TaskRepository) -&gt; None:
+        self._repository = repository
+
+    async def execute(self, task_id: str) -&gt; TaskDTO:
+        task = await self._repository.get(TaskId.from_string(task_id))
+        task.complete()                       # ← la décision est DANS le domaine
+        await self._repository.save(task)
+        return TaskDTO.from_entity(task)</code></pre></div>
+
+<p>La décision (« peut-on compléter ? ») n'est pas ici : elle est dans
+<code>task.complete()</code>. Le use case coordonne.</p>
+
+<div class="note">
+  <strong>Rappel de nuance</strong>
+  (<a href="./02-ou-vit-une-regle.html">ch. 02</a>) « Le use case ne contient pas
+  de règle » est une simplification. Il ne contient pas les <strong>invariants du
+  domaine</strong>. Il peut porter la <strong>policy du cas d'usage</strong>.
+</div>
+
+<h3 id="orchestration-inter-agrégats">Orchestration inter-agrégats<a class="anchor" href="#orchestration-inter-agrégats" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Quand une action touche plusieurs agrégats, le use case dépend de plusieurs
+ports :</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/task/use_cases/create_task.py
+class CreateTask:
+    def __init__(self, tasks: TaskRepository, users: UserRepository) -&gt; None:
+        self._tasks = tasks
+        self._users = users
+
+    async def execute(self, command: CreateTaskCommand) -&gt; TaskDTO:
+        owner_id = UserId.from_string(command.owner_id)
+        if not await self._users.exists(owner_id):
+            raise UserNotFound(str(owner_id))         # cohérence référentielle
+        task = Task.create(owner_id=owner_id, title=TaskTitle(command.title))
+        await self._tasks.save(task)
+        return TaskDTO.from_entity(task)</code></pre></div>
+
+<p>C'est la couche application qui coordonne des règles impliquant plusieurs
+agrégats &mdash; le domaine garde chaque agrégat cohérent isolément.</p>
+
+<h3 id="combiner-ports-métier-et-ports-techniques">Combiner ports métier et ports techniques<a class="anchor" href="#combiner-ports-métier-et-ports-techniques" aria-label="Lien vers cette section">#</a></h3>
+
+<p><code>GetUser</code> montre le mélange, et le contrat qui va avec :</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/user/use_cases/get_user.py
+class GetUser:
+    def __init__(self, repository: UserRepository, cache: CachePort) -&gt; None: ...
+
+    async def execute(self, user_id: str) -&gt; UserDTO:
+        identity = UserId.from_string(user_id)   # valider AVANT de toucher au cache
+        key = f"user:{identity}"
+
+        cached = await self._cache.get(key)
+        if cached is not None:
+            return self._from_cache(cached)
+
+        user = await self._repository.get(identity)
+        dto = UserDTO.from_entity(user)
+        await self._cache.set(key, asdict(dto))
+        return dto</code></pre></div>
+
+<p>Trois détails qui font la différence entre « ça marche » et « c'est correct » :</p>
+
+<ul>
+  <li><strong>L'identité est validée avant le cache</strong> : un ID
+      syntaxiquement invalide ne déclenche aucune lecture et ne crée aucune
+      entrée.</li>
+  <li><strong>Le contrat d'invalidation est écrit dans le docstring</strong> : la
+      clé est <code>user:{id}</code>, et toute mutation d'un <code>User</code> doit
+      la supprimer &mdash; c'est ce que fait <code>RenameUser</code>. Un cache dont
+      personne ne documente l'invalidation est un bug qui attend son heure.</li>
+  <li><strong>La reconstruction depuis le cache est explicite</strong>
+      (<code>_from_cache</code>) : JSON ne connaît pas <code>datetime</code>, il
+      faut re-parser.</li>
+</ul>
+
+<h2 id="les-dto--découpler-lapplication-de-ses-frontières">Les DTO : découpler l'application de ses frontières<a class="anchor" href="#les-dto--découpler-lapplication-de-ses-frontières" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Un use case ne renvoie pas une entité du domaine à l'API, et ne reçoit pas un
+schéma Pydantic &mdash; le premier couplerait le contrat public au modèle métier,
+le second ferait entrer le framework web dans l'application. On utilise des
+<strong>DTO</strong> : des structures neutres.</p>
+
+<div class="snippet" data-lang="python"><pre><code># application/task/dto.py
+@dataclass(frozen=True, slots=True)
+class CreateTaskCommand:        # entrée : une « commande »
+    owner_id: str
+    title: str
+    description: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class TaskDTO:                  # sortie
+    id: str
+    owner_id: str
+    title: str
+    # …
+    @classmethod
+    def from_entity(cls, task: Task) -&gt; TaskDTO: ...</code></pre></div>
+
+<p>Pourquoi ne pas exposer l'entité directement ? Trois raisons concrètes :</p>
+
+<ol>
+  <li><strong>Couplage de contrat.</strong> Renommer un attribut du domaine
+      casserait l'API publique. Le DTO absorbe ce genre de changement.</li>
+  <li><strong>Fuite d'état interne.</strong> Une entité expose des méthodes de
+      mutation (<code>complete</code>, <code>rename</code>) qui n'ont aucun sens
+      dans une réponse HTTP.</li>
+  <li><strong>Sérialisation.</strong> Le DTO parle en types simples
+      (<code>str</code>, <code>datetime</code>), pas en value objects &mdash; ce
+      qui le rend trivial à sérialiser… et à mettre en cache.</li>
+</ol>
+
+<p>Un DTO qui contiendrait <code>owner: User</code> raterait sa cible : il
+réintroduirait la navigation entre agrégats écartée au
+<a href="./05-relations-entre-agregats.html">chapitre 05</a>.</p>
+
+<h3 id="le-piège-inverse--la-cérémonie">Le piège inverse : la cérémonie<a class="anchor" href="#le-piège-inverse--la-cérémonie" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Tout ce chapitre justifie des traductions successives. Il faut aussi savoir
+quand elles deviennent absurdes. Compte les représentations d'un même concept dans
+ce projet :</p>
+
+<div class="snippet" data-lang="text"><pre><code>CreateUserRequest    (schéma HTTP, presentation)
+CreateUserCommand    (DTO d'entrée, application)
+User                 (entité, domain)
+UserDTO              (DTO de sortie, application)
+UserResponse         (schéma HTTP, presentation)
+UserModel            (modèle ORM, infrastructure)</code></pre></div>
+
+<p><strong>Six classes pour transporter un nom et un e-mail.</strong> Pour un
+système durable avec un métier riche, c'est parfaitement raisonnable : chacune a
+une raison de changer différente, et c'est précisément ce qui permet de faire
+évoluer l'API sans toucher au domaine. Pour un CRUD administratif de 400 lignes
+qui ne grossira jamais, c'est absurde &mdash; et le dire fait partie du cours.</p>
+
+<p>Trois questions pour trancher, à poser objet par objet et non en bloc :</p>
+
+<ol>
+  <li><strong>Ces deux représentations ont-elles des raisons de changer
+      différentes ?</strong> Si le schéma HTTP et le DTO d'entrée changeront
+      toujours ensemble et pour la même raison, l'un des deux est du bruit.</li>
+  <li><strong>Y a-t-il un deuxième appelant, réel ou probable ?</strong> Le CLI et
+      le worker de ce projet justifient à eux seuls <code>CreateUserCommand</code> :
+      sans lui, ils dépendraient d'un objet Pydantic conçu pour HTTP.</li>
+  <li><strong>Le domaine a-t-il une forme différente du transport ?</strong>
+      <code>User</code> porte des value objects (<code>Email</code>,
+      <code>UserName</code>) ; <code>UserResponse</code> porte des <code>str</code>.
+      Quand les deux formes sont identiques champ pour champ et pour toujours, le
+      mapper ne protège rien.</li>
+</ol>
+
+<p>La tension entre isolation et cérémonie ne se résout pas une fois pour toutes :
+elle se rejuge à chaque couche ajoutée. Le
+<a href="./13-demarrer-un-projet.html#et-lentre-deux-">chapitre 13</a> propose une
+progression graduée plutôt qu'un choix tout-ou-rien.</p>
+
+<h2 id="le-flux-complet-dune-requête">Le flux complet d'une requête<a class="anchor" href="#le-flux-complet-dune-requête" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 900 452" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Diagramme de séquence : le client poste une tâche, le router valide le schéma Pydantic puis appelle le use case avec une commande. Le use case vérifie l'existence du propriétaire via le repository, demande au domaine de créer la tâche, la fait enregistrer sans commit, puis renvoie un DTO que le router transforme en réponse 201. Le commit a lieu à la sortie de la dépendance de session.">
+  <defs>
+    <marker id="f6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="10" width="114" height="34" rx="6"/>
+      <rect x="148" y="10" width="114" height="34" rx="6"/>
+      <rect x="288" y="10" width="114" height="34" rx="6"/>
+      <rect x="428" y="10" width="114" height="34" rx="6"/>
+      <rect x="568" y="10" width="114" height="34" rx="6"/>
+      <rect x="740" y="10" width="120" height="34" rx="6"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="65" y="32">Client HTTP</text>
+      <text x="205" y="32">Router</text>
+      <text x="345" y="32">Use case</text>
+      <text x="485" y="32">Domaine</text>
+      <text x="625" y="32">Repository</text>
+      <text x="800" y="32">PostgreSQL</text>
+    </g>
+
+    <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4">
+      <line x1="65" y1="46" x2="65" y2="410"/>
+      <line x1="205" y1="46" x2="205" y2="410"/>
+      <line x1="345" y1="46" x2="345" y2="410"/>
+      <line x1="485" y1="46" x2="485" y2="410"/>
+      <line x1="625" y1="46" x2="625" y2="410"/>
+      <line x1="800" y1="46" x2="800" y2="410"/>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f6)">
+      <line x1="65" y1="78" x2="201" y2="78"/>
+      <path d="M 205 100 L 250 100 L 250 120 L 209 120"/>
+      <line x1="205" y1="152" x2="341" y2="152"/>
+      <line x1="345" y1="184" x2="621" y2="184"/>
+      <line x1="625" y1="212" x2="796" y2="212"/>
+      <line x1="345" y1="248" x2="481" y2="248"/>
+      <line x1="345" y1="308" x2="621" y2="308"/>
+      <line x1="625" y1="336" x2="796" y2="336"/>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#f6)">
+      <line x1="485" y1="276" x2="349" y2="276"/>
+      <line x1="345" y1="366" x2="209" y2="366"/>
+      <line x1="205" y1="394" x2="69" y2="394"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="10" text-anchor="middle">
+      <text x="133" y="72">POST /users/{id}/tasks {title}</text>
+      <text x="273" y="146">execute(CreateTaskCommand)</text>
+      <text x="483" y="178">users.exists(owner_id)</text>
+      <text x="710" y="206">SELECT</text>
+      <text x="413" y="242">Task.create(owner_id, TaskTitle(title))</text>
+      <text x="483" y="302">tasks.save(task)</text>
+      <text x="710" y="330">INSERT (aucun commit ici)</text>
+    </g>
+    <g fill="var(--muted)" font-size="10" text-anchor="middle">
+      <text x="415" y="270">Task (toujours valide)</text>
+      <text x="277" y="360">TaskDTO</text>
+      <text x="137" y="388">201 + TaskResponse</text>
+    </g>
+    <text x="258" y="106" fill="var(--muted)" font-size="10">valide le schéma Pydantic</text>
+
+    <rect x="230" y="420" width="440" height="26" rx="5" fill="var(--raised)" stroke="var(--accent)"/>
+    <text x="450" y="437" fill="var(--accent)" font-size="10.5" font-weight="600" text-anchor="middle">commit à la sortie de la dépendance de session</text>
+  </g>
+</svg>
+</figure>
+
+<p>Le use case est testable sans FastAPI ni base : on lui passe une
+<code>CreateTaskCommand</code> et des ports en mémoire, on vérifie le
+<code>TaskDTO</code> renvoyé. C'est exactement ce que fait
+<code>tests/unit/application/</code>
+(<a href="./12-organisation-et-tests.html">ch. 12</a>).</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Un <strong>port</strong> appartient à la couche qui <strong>exprime le
+      besoin</strong> : <code>domain/</code> pour les repositories,
+      <code>application/</code> pour cache, SMTP, broker.</li>
+  <li>Un port ne laisse pas fuiter son implémentation (pas de <code>connect</code>,
+      pas de SQL).</li>
+  <li>Le <strong>use case orchestre</strong> : il ne porte pas les invariants, il
+      peut porter la policy du cas d'usage.</li>
+  <li>Une action multi-agrégats → un use case dépendant de plusieurs ports.</li>
+  <li>Les <strong>DTO</strong> isolent l'application des frameworks des deux côtés,
+      et évitent de réintroduire la navigation entre agrégats.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Nouveau besoin : « à la création d'un user, envoyer un e-mail de
+        bienvenue ». <strong>a.</strong> dans quelle couche déclares-tu le port ?
+        <strong>b.</strong> pourquoi pas dans <code>domain/user/</code> ?
+        <strong>c.</strong> si l'envoi échoue, la création doit-elle être annulée
+        &mdash; et que t'apprend ta réponse sur le placement ?
+        <strong>d.</strong> quelle alternative choisirais-tu si l'envoi devenait
+        lent ou peu fiable ?</li>
+    <li><code>CachePort</code> expose <code>get</code>, <code>set</code>,
+        <code>delete</code>, <code>ping</code>. Pourquoi <code>ping</code> est-il
+        un cas limite discutable &mdash; et qu'est-ce qui le justifie malgré tout ?</li>
+    <li>Un collègue propose de remplacer <code>CreateTaskCommand</code> par le
+        schéma Pydantic <code>CreateTaskRequest</code>, « pour éviter la
+        duplication ». Quel contrat import-linter casse, et que perd-on côté CLI
+        et worker ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-06">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./05-relations-entre-agregats.html">&larr; 05. Relations entre agrégats</a>
+  <a href="./07-adaptateurs.html">07. Les adaptateurs &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

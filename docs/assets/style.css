@@ -1,0 +1,840 @@
+/*
+ * Feuille de style unique du site.
+ *
+ * La palette est reprise du frontend de l'application (frontend/src/index.css) :
+ * le site et l'app doivent se ressembler. L'app est claire par choix ; le site
+ * suit la préférence système, parce qu'une documentation se lit dans beaucoup
+ * plus de contextes qu'une application ne s'utilise.
+ *
+ * Aucune ressource externe : pas de police, pas de script, pas de CDN. Le site
+ * fonctionne hors ligne et sur GitHub Pages sans configuration. Les titres
+ * utilisent un serif système, qui évoque le Fraunces du frontend sans charger
+ * un seul octet.
+ *
+ * Tous les liens du site sont relatifs : le site marche quel que soit le nom du
+ * dépôt, et en local via `python3 -m http.server`.
+ */
+
+:root {
+  --ground: #f3f6f4;
+  --surface: #ffffff;
+  --raised: #e9efec;
+  --line: #d5dde3;
+  --ink: #1a2332;
+  --muted: #5c6b7a;
+  --accent: #0f766e;
+  --accent-ink: #ffffff;
+  --accent-soft: #ccfbf1;
+  --danger: #b91c1c;
+  --ok: #15803d;
+  --shadow: 0 1px 3px rgb(26 35 50 / 0.08);
+  --serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #131a24;
+    --surface: #1a2332;
+    --raised: #233042;
+    --line: #31415a;
+    --ink: #e6ecf2;
+    --muted: #94a6b8;
+    --accent: #5eead4;
+    --accent-ink: #06201d;
+    --accent-soft: #134e4a;
+    --danger: #f87171;
+    --ok: #4ade80;
+    --shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  margin: 0;
+  /* Le dégradé du frontend, en beaucoup plus discret : il teinte le haut de la
+     page sans jamais gêner la lecture, et disparaît en thème sombre. */
+  background:
+    radial-gradient(ellipse 70% 40% at 12% -8%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 60%),
+    var(--ground);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+code,
+pre,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ------------------------------------------------------------------ en-tête */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.25rem;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.brand span {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: 0.85rem;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+/* Navigation entre les deux sections du site (cours / infra). */
+.topnav {
+  display: flex;
+  gap: 0.9rem;
+  margin-left: 1.1rem;
+  font-size: 0.9rem;
+}
+
+.topnav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.topnav a:hover {
+  color: var(--accent);
+}
+
+.topnav a[aria-current="true"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Zone de droite du topbar. `.repo` pousse tout le groupe à droite ; la place
+   d'un futur sélecteur de langue (v2) est déjà réservée ici. */
+.topbar .repo {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------- corps */
+
+.shell {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  gap: 2.5rem;
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 5rem;
+}
+
+@media (max-width: 60rem) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+/* ---------------------------------------------------------------- navigation */
+
+.sidenav {
+  position: sticky;
+  top: 4.5rem;
+  align-self: start;
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 60rem) {
+  .sidenav {
+    position: static;
+    max-height: none;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--surface);
+  }
+}
+
+.sidenav h2 {
+  margin: 1.25rem 0 0.4rem;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sidenav h2:first-child {
+  margin-top: 0;
+}
+
+.sidenav ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidenav li {
+  margin-bottom: 0;
+}
+
+.sidenav a {
+  display: block;
+  padding: 0.28rem 0.6rem;
+  margin-left: -0.6rem;
+  border-radius: 0.3rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.sidenav a:hover {
+  background: var(--raised);
+}
+
+.sidenav a[aria-current="page"] {
+  background: var(--raised);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Le numéro de chapitre, en tête d'entrée : discret, largeur fixe pour que les
+   libellés s'alignent. */
+.sidenav .num {
+  display: inline-block;
+  width: 1.6rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------- contenu */
+
+main {
+  min-width: 0;
+}
+
+main > header {
+  padding-bottom: 1.25rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  margin: 0 0 0.4rem;
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+.lede {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 1.05rem;
+  color: var(--muted);
+}
+
+h2 {
+  margin: 2.75rem 0 0.9rem;
+  font-size: 1.35rem;
+  scroll-margin-top: 5rem;
+}
+
+h3 {
+  margin: 2rem 0 0.6rem;
+  font-size: 1.05rem;
+  scroll-margin-top: 5rem;
+}
+
+h2 .anchor,
+h3 .anchor {
+  margin-left: 0.4rem;
+  color: var(--muted);
+  opacity: 0;
+  text-decoration: none;
+  font-weight: 400;
+}
+
+h2:hover .anchor,
+h3:hover .anchor,
+.anchor:focus {
+  opacity: 1;
+}
+
+p,
+ul,
+ol {
+  margin: 0 0 1rem;
+}
+
+ul,
+ol {
+  padding-left: 1.35rem;
+}
+
+li {
+  margin-bottom: 0.35rem;
+}
+
+strong {
+  font-weight: 600;
+}
+
+hr {
+  height: 1px;
+  margin: 2.5rem 0;
+  border: 0;
+  background: var(--line);
+}
+
+blockquote {
+  margin: 0 0 1.25rem;
+  padding-left: 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------------- code */
+
+code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--raised);
+  font-size: 0.875em;
+  word-break: break-word;
+}
+
+pre {
+  margin: 0 0 1.25rem;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  word-break: normal;
+}
+
+/* Étiquette de langage, posée par un attribut sur le conteneur. */
+.snippet {
+  position: relative;
+  margin-bottom: 1.25rem;
+}
+
+.snippet > pre {
+  margin: 0;
+}
+
+.snippet::after {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0.5rem;
+  right: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ tableaux */
+
+.table-wrap {
+  margin-bottom: 1.25rem;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  padding: 0.55rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+thead th {
+  background: var(--surface);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+td code {
+  white-space: nowrap;
+}
+
+/*
+ * Tableau « principe vs choix de ce projet ».
+ *
+ * C'est la signature pédagogique du cours : la colonne du milieu est
+ * transférable partout, celle de droite n'est qu'un choix parmi d'autres. La
+ * mise en forme doit rendre cette asymétrie lisible d'un coup d'œil.
+ */
+.table-principe td:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table-principe td:last-child {
+  color: var(--muted);
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+@media (max-width: 40rem) {
+  .table-principe td:first-child {
+    white-space: normal;
+  }
+}
+
+/* ------------------------------------------------------------------- encarts */
+
+.note,
+.warn,
+.danger,
+.tldr {
+  padding: 0.85rem 1rem;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 0.4rem;
+  background: var(--surface);
+}
+
+.note {
+  border-left-color: var(--accent);
+}
+
+.warn {
+  border-left-color: var(--danger);
+}
+
+.danger {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.note > :last-child,
+.warn > :last-child,
+.danger > :last-child,
+.tldr > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * Le titre de l'encart, et lui seul. Le combinateur enfant « > » est essentiel :
+ * en sélecteur descendant, la règle attrapait aussi tout <strong> ouvrant un <p>
+ * — et « :first-child » ignorant les nœuds texte, un mot mis en gras au milieu
+ * d'une phrase passait en bloc et cassait la ligne.
+ */
+.note > strong:first-child,
+.warn > strong:first-child,
+.danger > strong:first-child {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+/*
+ * Le résumé de tête de chapitre. Il n'est pas décoratif : c'est ce qui permet
+ * de survoler le cours sans le lire, et de retrouver un chapitre plus tard.
+ */
+.tldr {
+  margin-bottom: 2rem;
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  font-size: 0.95rem;
+}
+
+.tldr strong:first-child {
+  display: inline;
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ exercices */
+
+/*
+ * « À toi de jouer », en fin de chapitre. Les exercices demandent surtout de
+ * décider où placer quelque chose : ils méritent d'être visuellement distincts
+ * du corps du cours, sans crier.
+ */
+.exercises {
+  margin: 3rem 0 0;
+  padding: 1.1rem 1.35rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.exercises h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.exercises ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.exercises li {
+  margin-bottom: 0.75rem;
+}
+
+.exercises li:last-child {
+  margin-bottom: 0;
+}
+
+.exercises .solutions {
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+}
+
+/* --------------------------------------------------------------------- cartes */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.cards li {
+  margin: 0;
+}
+
+.cards a,
+.cards > li > div {
+  display: block;
+  height: 100%;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+.cards a:hover {
+  border-color: var(--accent);
+}
+
+.cards strong {
+  display: block;
+  margin-bottom: 0.15rem;
+  color: var(--accent);
+}
+
+.cards p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+/* -------------------------------------------------------------------- badges */
+
+.pill {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.pill-ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+}
+
+.pill-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+
+/* ----------------------------------------------------------- schémas (SVG) */
+
+/*
+ * Les schémas sont du SVG écrit à la main, sans couleur en dur : ils héritent
+ * des variables de thème et restent lisibles en clair comme en sombre. Larges
+ * par nature, ils défilent dans leur propre boîte plutôt que de pousser la page
+ * de côté.
+ */
+.diagram {
+  overflow-x: auto;
+  margin: 1.5rem 0 2rem;
+}
+
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 30rem;
+  height: auto;
+}
+
+.diagram figcaption,
+.shot-caption {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ pied et pager */
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin-top: 3.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+footer.site {
+  padding: 1.5rem 1.25rem 2.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip:focus {
+  left: 1rem;
+  top: 0.6rem;
+  z-index: 30;
+  padding: 0.4rem 0.7rem;
+  border-radius: 0.3rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ---------------------------------------------------------------------------
+ * Page d'accueil (index.html)
+ *
+ * Les pages du cours sont une grille à deux colonnes avec sommaire latéral ;
+ * l'accueil est une colonne centrée sans navigation, parce qu'elle a un seul
+ * travail : amener un visiteur de « c'est quoi ce dépôt » à « je lis le cours »
+ * ou « je clone » sans détour. Elle réutilise les mêmes jetons, .cards,
+ * .snippet et .table-wrap plutôt que d'introduire un second système visuel.
+ * ------------------------------------------------------------------------ */
+
+.landing {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 0 1.25rem 4rem;
+}
+
+.hero {
+  padding: 3.5rem 0 2rem;
+  text-align: center;
+}
+
+.hero h1 {
+  margin: 0 0 0.75rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.hero .lede {
+  max-width: 46rem;
+  margin: 0 auto 1.75rem;
+  font-size: 1.15rem;
+}
+
+.hero .lede strong {
+  color: var(--ink);
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.cta a {
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cta a.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.cta a:hover {
+  border-color: var(--accent);
+}
+
+.landing h2 {
+  margin-top: 3rem;
+  font-size: 1.5rem;
+}
+
+.landing .diagram svg {
+  min-width: 46rem;
+}
+
+/* Le sommaire du cours sur l'accueil : une ligne par chapitre, le numéro en
+   colonne fixe pour que les titres s'alignent. */
+.toc {
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.toc li {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.toc li:last-child {
+  border-bottom: none;
+}
+
+.toc a {
+  display: flex;
+  gap: 0.9rem;
+  align-items: baseline;
+  padding: 0.6rem 1rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.toc a:hover {
+  background: var(--raised);
+}
+
+.toc .num {
+  flex: none;
+  width: 1.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+
+.toc .title {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.toc .hook {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 40rem) {
+  .toc a {
+    flex-wrap: wrap;
+    gap: 0.3rem 0.9rem;
+  }
+
+  .toc .hook {
+    flex-basis: 100%;
+    padding-left: 2.7rem;
+  }
+}
+
+.closing {
+  margin-top: 3rem;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  text-align: center;
+}

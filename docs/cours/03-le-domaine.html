@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03. Le domaine &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="DDD stratégique en 15 minutes, puis le tactique : value objects définis par leur valeur, entités par leur identité, invariants, factories et exceptions métier.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html" aria-current="page"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>03. Le domaine (DDD tactique)</h1>
+  <p class="lede">Le cœur : les règles, exprimées avec les mots du métier, sans
+  une ligne de technique.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Le DDD tactique fournit trois briques : value
+  objects (définis par leur valeur), entités (définies par leur identité),
+  agrégats (frontières de cohérence,
+  <a href="./04-les-agregats.html">chapitre 04</a>). Le domaine ne fait
+  <strong>aucune I/O</strong> et n'importe <strong>aucun framework</strong>.
+</div>
+
+<h2 id="ddd-stratégique-vs-ddd-tactique">DDD stratégique vs DDD tactique<a class="anchor" href="#ddd-stratégique-vs-ddd-tactique" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le DDD n'est pas une liste de classes. Il a deux moitiés, et ce cours n'en
+traite vraiment qu'une :</p>
+
+<div class="snippet" data-lang="text"><pre><code>DDD
+├── Stratégique  (le plus important, le moins codé)
+│   ├── langage ubiquitaire   — parler comme le métier, dans le code
+│   ├── bounded contexts      — frontières de sens
+│   └── context mapping       — comment les contextes s'intègrent
+│
+└── Tactique     (les briques de code)
+    ├── value objects
+    ├── entités
+    ├── agrégats
+    ├── services de domaine
+    ├── repositories (ports)
+    └── domain events</code></pre></div>
+
+<p>Une conséquence pratique du <strong>langage ubiquitaire</strong> : les noms du
+code viennent des experts métier, pas de la base de données.
+<code>TaskTitle</code>, <code>EmptyTitle</code>, <code>TaskAlreadyCompleted</code>
+sont des phrases du métier. Si tu te surprends à nommer une classe
+<code>TaskRow</code>, <code>UserData</code> ou <code>TaskManagerHelper</code>, tu
+as basculé du côté technique.</p>
+
+<h2 id="ddd-stratégique-en-15-minutes">DDD stratégique en 15 minutes<a class="anchor" href="#ddd-stratégique-en-15-minutes" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le reste de ce chapitre &mdash; et une bonne partie du cours &mdash; traite du
+tactique. C'est un déséquilibre assumé : ce dépôt est un exemple de code, et le
+stratégique se joue en réunion avec des experts métier, pas dans un fichier
+Python.</p>
+
+<p>Mais il faut savoir ceci : <strong>on peut appliquer parfaitement tous les
+patterns tactiques et rater complètement le DDD.</strong> Des entités impeccables
+sur des frontières mal découpées produisent un système propre localement et
+incohérent globalement. Voici donc le minimum pour ne pas réduire le DDD à
+« entités + value objects + agrégats ».</p>
+
+<h3 id="bounded-context--une-frontière-de-sens">Bounded context : une frontière de sens<a class="anchor" href="#bounded-context--une-frontière-de-sens" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un <strong>bounded context</strong> est une frontière à l'intérieur de
+laquelle un <strong>modèle et son langage sont cohérents</strong>, et dont les
+règles de signification sont maîtrisées. Ce n'est pas d'abord une affaire de
+vocabulaire : c'est une affaire de modèle.</p>
+
+<p>Le vocabulaire en est le <strong>meilleur indice</strong>, et le plus facile à
+observer : si le même terme recouvre des concepts ou des règles différentes selon
+les interlocuteurs, c'est un signal fort qu'il faut examiner une séparation. Ce
+n'est pas à lui seul un critère suffisant &mdash; deux équipes peuvent
+parfaitement partager un mot et sa définition tout en ayant besoin de modèles
+séparés, pour des raisons de cycle de vie, de rythme de changement ou de
+propriété.</p>
+
+<p>Exemple classique : dans un e-commerce, <code>Product</code> désigne dans
+<code>catalog</code> un descriptif avec photos, catégories et prix affiché
+&mdash; et dans <code>ordering</code> une référence, un prix figé au moment de la
+commande et une quantité. Même mot, deux concepts. La bonne réponse
+<strong>n'est pas</strong> de fabriquer un <code>Product</code> universel qui
+satisfait les deux : c'est de reconnaître qu'il y en a deux.</p>
+
+<div class="note">
+  <strong>Le réflexe à désapprendre</strong>
+  Le dédoublement d'un concept entre deux contextes n'est pas de la duplication à
+  éliminer. Un modèle unique qui sert tout le monde ne sert bien personne &mdash;
+  le symptôme est une classe qui grossit avec des champs optionnels qui n'ont de
+  sens que pour la moitié des appelants.
+</div>
+
+<h3 id="context-map--comment-les-contextes-se-parlent">Context map : comment les contextes se parlent<a class="anchor" href="#context-map--comment-les-contextes-se-parlent" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Une <strong>context map</strong> décrit les relations entre contextes. Les
+quelques formes à connaître :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Relation</th><th>Ce que ça veut dire</th><th>Quand</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Shared kernel</strong></td><td>Deux contextes partagent un petit noyau de modèle, modifié d'un commun accord</td><td>Équipes proches, noyau vraiment stable</td></tr>
+    <tr><td><strong>Customer / supplier</strong></td><td>L'amont s'engage à servir les besoins de l'aval ; négociation possible</td><td>Deux équipes, une dépendance assumée</td></tr>
+    <tr><td><strong>Conformist</strong></td><td>L'aval adopte tel quel le modèle de l'amont, sans négocier</td><td>L'amont ne bougera pas (SI historique, API tierce)</td></tr>
+    <tr><td><strong>Anti-corruption layer</strong></td><td>L'aval traduit le modèle de l'amont dans le sien, via une couche dédiée</td><td>Le modèle amont est inadapté ou instable</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>L'<strong>anti-corruption layer</strong> (ACL) est de loin la plus utile à
+connaître, et c'est exactement la même idée que ce cours applique partout : une
+couche de traduction qui empêche un modèle extérieur de contaminer le tien. Un
+mapper protège ton domaine de l'ORM ; un ACL protège ton contexte du modèle d'un
+autre système.</p>
+
+<h3 id="et-dans-ce-projet-">Et dans ce projet ?<a class="anchor" href="#et-dans-ce-projet-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>La réponse honnête mérite mieux qu'un « oui ». <code>task</code> et
+<code>user</code> sont souvent présentés comme deux bounded contexts. Regarde les
+indices, sans en faire un seul test : <code>User</code> n'a qu'un sens ici
+&mdash; le propriétaire d'une tâche, partout, sans ambiguïté. Une seule équipe,
+un seul déploiement, une seule migration qui crée les deux tables, et un
+<code>CreateTask</code> qui exige une cohérence immédiate entre les deux. Aucun
+indice ne va dans le sens de deux modèles distincts.</p>
+
+<p>Ce sont donc <strong>deux agrégats dans un seul bounded context</strong>,
+tranchés verticalement en modules. Ce n'est pas un défaut : le découpage est
+juste, il rend une extraction future presque gratuite, et le métier est trop
+simple pour justifier deux vocabulaires. Mais l'étiquette est plus ambitieuse que
+la réalité, et le savoir fait partie du sujet &mdash; c'est développé dans le
+<a href="./ddd-strategique.html">carnet de terrain</a>.</p>
+
+<p>Ce qui est bien réel : la relation entre les deux tranches est minimale.
+<code>task</code> connaît <code>UserId</code> et rien d'autre &mdash; pas de
+<code>User</code> importé, pas de nom, pas d'e-mail. Et
+<code>domain/shared/</code> (bases d'exceptions) est ce qui s'approche le plus
+d'un <strong>shared kernel</strong> : quelques classes sans logique, stables par
+nature. C'est la seule forme de noyau partagé qui vieillit bien ; le jour où on y
+mettrait des règles, il faudrait le découper.</p>
+
+<p>Il n'y a pas d'ACL non plus. Le jour où <code>user</code> deviendrait un
+service distinct, c'est précisément là qu'il faudrait en introduire un &mdash; et
+le fait que <code>task</code> ne connaisse qu'un <code>UserId</code> rend ce
+jour-là beaucoup moins douloureux.</p>
+
+<blockquote>
+  <p><strong>Ce qu'il faut retenir</strong> : le stratégique décide <strong>où
+  sont les frontières</strong> ; le tactique décide <strong>comment on code à
+  l'intérieur d'une frontière</strong>. Se tromper de frontière coûte infiniment
+  plus cher que se tromper de pattern.</p>
+</blockquote>
+
+<div class="note">
+  <strong>Pour la pratique</strong>
+  Cette section donne le vocabulaire, pas la méthode. La procédure d'atelier
+  (EventStorming, repérage des ruptures, context map, tests de validation d'une
+  frontière) vit dans un document séparé &mdash;
+  <a href="./ddd-strategique.html">DDD stratégique, carnet de terrain</a> &mdash;
+  parce qu'elle se <em>fait</em> avec des experts métier et ne se lit pas dans un
+  dépôt de code.
+</div>
+
+<h2 id="ddd-tactique-en-15-minutes">DDD tactique en 15 minutes<a class="anchor" href="#ddd-tactique-en-15-minutes" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Symétrique de la section précédente. Voici la boîte à outils complète, avant
+d'entrer dans le détail : ce chapitre traite les trois premières briques, les
+agrégats ont le <a href="./04-les-agregats.html">chapitre 04</a>, les repositories
+le <a href="./06-application-et-ports.html">chapitre 06</a>, les événements le
+<a href="./11-cache-et-evenements.html">chapitre 11</a>.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Brique</th><th>À quelle question elle répond</th><th>Dans ce projet</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Value object</strong></td><td>« Cette chose est-elle définie par sa valeur ? »</td><td><code>TaskTitle</code>, <code>Email</code>, <code>UserName</code>, <code>TaskStatus</code>, <code>TaskId</code>, <code>UserId</code></td></tr>
+    <tr><td><strong>Entité</strong></td><td>« A-t-elle une identité qui survit à ses changements ? »</td><td><code>Task</code>, <code>User</code></td></tr>
+    <tr><td><strong>Agrégat</strong> + racine</td><td>« Qu'est-ce qui doit être cohérent dans la même transaction ? »</td><td><code>Task</code> et <code>User</code>, chacune racine de son agrégat</td></tr>
+    <tr><td><strong>Factory</strong></td><td>« Comment naît un objet déjà valide ? »</td><td><code>Task.create()</code>, <code>User.create()</code></td></tr>
+    <tr><td><strong>Repository</strong> (port)</td><td>« Comment retrouver et persister un agrégat ? »</td><td><code>TaskRepository</code>, <code>UserRepository</code>, déclarés dans <code>domain/</code></td></tr>
+    <tr><td><strong>Service de domaine</strong></td><td>« Où va une règle métier qui n'appartient à aucun objet ? »</td><td><strong>absent</strong> &mdash; aucune règle n'est dans ce cas ici</td></tr>
+    <tr><td><strong>Domain event</strong></td><td>« Que faire savoir quand quelque chose d'important s'est produit ? »</td><td><strong>absent</strong> &mdash; le métier est trop simple ; le message RabbitMQ est un événement d'<em>intégration</em>, ce qui est autre chose (<a href="./11-cache-et-evenements.html">ch. 11</a>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Deux remarques sur la colonne de droite.</p>
+
+<p><strong>Les absences sont documentées.</strong> Ce projet n'a ni service de
+domaine ni événement de domaine, et c'est écrit noir sur blanc. Un dépôt qui
+exhibe les sept briques parce qu'elles figurent dans le livre enseigne à cocher
+des cases ; un dépôt qui dit « je n'en ai pas besoin ici, et voilà pourquoi »
+enseigne à décider.</p>
+
+<p><strong>Ce ne sont pas des cases à cocher.</strong> Chaque brique répond à une
+question de la colonne du milieu. Si la question ne se pose pas, la brique est du
+décor &mdash; et du décor coûteux, parce qu'il faut le maintenir. Le
+<a href="./02-ou-vit-une-regle.html">chapitre 02</a> est précisément l'outil qui
+te dit laquelle sortir.</p>
+
+<blockquote>
+  <p>Ces briques ne se choisissent pas dans l'ordre du tableau. On part toujours
+  du même endroit : où est la frontière de cohérence
+  (<a href="./04-les-agregats.html">ch. 04</a>), puis quelle décision vit où
+  (<a href="./02-ou-vit-une-regle.html">ch. 02</a>). Le tableau est un inventaire,
+  pas une méthode.</p>
+</blockquote>
+
+<h2 id="value-objects--définis-par-leur-valeur">Value objects : définis par leur valeur<a class="anchor" href="#value-objects--définis-par-leur-valeur" aria-label="Lien vers cette section">#</a></h2>
+
+<p><strong>La propriété qui définit un value object est l'absence d'identité
+propre : deux value objects de même valeur sont interchangeables.</strong> Deux
+<code>Email("a@b.c")</code> sont <em>le même</em> e-mail ; on ne se demande jamais
+« lequel des deux ? ».</p>
+
+<p>L'immuabilité et l'auto-validation ne <em>définissent</em> pas le concept
+&mdash; ce sont des pratiques (excellentes) qui en découlent presque toujours.</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Value object</td><td>Pas d'identité, égalité par valeur</td><td><code>dataclass(frozen=True, slots=True)</code> : immuable, auto-validé, normalisé</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/value_objects.py
+@dataclass(frozen=True, slots=True)   # frozen → immuable ; slots → pas de __dict__
+class TaskTitle:
+    value: str
+
+    def __post_init__(self) -&gt; None:
+        cleaned = self.value.strip()
+        if not cleaned:
+            raise EmptyTitle()                     # invalide → l'objet n'existe pas
+        if len(cleaned) &gt; TITLE_MAX_LENGTH:
+            raise TitleTooLong(TITLE_MAX_LENGTH)
+        object.__setattr__(self, "value", cleaned) # normalisation, voir ci-dessous</code></pre></div>
+
+<h3 id="pourquoi-object__setattr__-">Pourquoi <code>object.__setattr__</code> ?<a class="anchor" href="#pourquoi-object__setattr__-" aria-label="Lien vers cette section">#</a></h3>
+
+<p><code>frozen=True</code> fait lever une erreur à toute affectation
+<code>self.value = ...</code>, y compris dans <code>__post_init__</code>. Pour
+<strong>normaliser</strong> la valeur (ici, retirer les espaces de bord) au moment
+de la construction, on contourne explicitement le garde-fou via
+<code>object.__setattr__</code>.</p>
+
+<p>C'est une exception assumée et localisée : elle n'a lieu qu'à la construction,
+avant que l'objet ne soit visible de qui que ce soit. Une fois
+<code>__init__</code> terminé, l'objet est bel et bien immuable pour tout le reste
+du programme.</p>
+
+<h3 id="le-gain--always-valid-model">Le gain : <em>always-valid model</em><a class="anchor" href="#le-gain--always-valid-model" aria-label="Lien vers cette section">#</a></h3>
+
+<figure class="diagram">
+<svg viewBox="0 0 720 230" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Une chaîne venue du monde extérieur traverse le value object TaskTitle, qui valide et normalise. Si elle est valide, elle entre dans le domaine sous forme normalisée ; si elle est vide, EmptyTitle est levée et l'objet n'est jamais construit.">
+  <defs>
+    <marker id="f3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <rect x="8" y="76" width="160" height="64" rx="7" fill="var(--surface)" stroke="var(--line)"/>
+    <rect x="270" y="64" width="180" height="88" rx="8" fill="var(--raised)" stroke="var(--accent)"/>
+    <rect x="550" y="20" width="162" height="64" rx="7" fill="var(--surface)" stroke="var(--accent)"/>
+    <rect x="550" y="132" width="162" height="64" rx="7" fill="var(--surface)" stroke="var(--danger)"/>
+
+    <g fill="var(--ink)" font-size="12.5" font-weight="600" text-anchor="middle">
+      <text x="88" y="103">Monde extérieur</text>
+      <text x="360" y="100">TaskTitle(&#8230;)</text>
+      <text x="631" y="46">Domaine</text>
+    </g>
+    <text x="631" y="158" fill="var(--danger)" font-size="12.5" font-weight="600" text-anchor="middle">EmptyTitle</text>
+
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="88" y="120">str &#183; JSON &#183; argv</text>
+      <text x="360" y="118">validation</text>
+      <text x="360" y="134">+ normalisation</text>
+      <text x="631" y="64">toujours valide</text>
+      <text x="631" y="176">l'objet n'est jamais construit</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f3)">
+      <line x1="172" y1="112" x2="266" y2="112"/>
+      <path d="M 454 92 L 505 92 L 505 52 L 546 52"/>
+      <path d="M 454 124 L 505 124 L 505 164 L 546 164"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="10" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" text-anchor="middle">
+      <text x="219" y="105">"  Rédiger la doc  "</text>
+      <text x="500" y="40">"Rédiger la doc"</text>
+      <text x="500" y="200">""</text>
+    </g>
+  </g>
+</svg>
+</figure>
+
+<p>Une fois cette barrière franchie, <strong>plus une seule ligne du domaine n'a
+besoin de re-vérifier</strong>. La question « et si le titre était vide ? » ne se
+pose plus : un <code>TaskTitle</code> vide n'existe pas. La validation est faite
+une fois, au bon endroit.</p>
+
+<p>Compare :</p>
+
+<div class="snippet" data-lang="python"><pre><code>Email("bob@example.com")      # ✅ construit → forcément valide
+user.email = "n'importe quoi" # ❌ impossible : Email refuse la construction</code></pre></div>
+
+<h3 id="un-value-object-ne-fait-pas-dio">Un value object ne fait pas d'I/O<a class="anchor" href="#un-value-object-ne-fait-pas-dio" aria-label="Lien vers cette section">#</a></h3>
+
+<p><code>Email</code> illustre magnifiquement une frontière qu'on franchit sans y
+penser :</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/user/value_objects.py
+validate_email(cleaned, check_deliverability=False)</code></pre></div>
+
+<p>Activer <code>check_deliverability</code> (le défaut de la bibliothèque)
+résoudrait les enregistrements MX du domaine &mdash; donc <strong>une I/O réseau
+au cœur du domaine</strong>. La validité d'un e-mail dépendrait alors du DNS : non
+déterministe, lente, et capable de rejeter une adresse parfaitement valide sur une
+panne de résolution.</p>
+
+<p>La règle générale : <strong>un value object valide une forme, jamais un fait du
+monde extérieur.</strong> Vérifier qu'une adresse <em>reçoit</em> réellement du
+courrier est le travail d'un adaptateur (envoi d'un e-mail de confirmation), pas
+d'un VO.</p>
+
+<p>Autres value objects du projet : <code>UserName</code>, <code>TaskStatus</code>
+(énumération d'états), et les identités <code>TaskId</code> / <code>UserId</code>.</p>
+
+<h3 id="les-identités-sont-des-value-objects">Les identités sont des value objects<a class="anchor" href="#les-identités-sont-des-value-objects" aria-label="Lien vers cette section">#</a></h3>
+
+<p><code>UserId</code> encapsule un <code>uuid.UUID</code>. Deux détails de
+conception :</p>
+
+<div class="snippet" data-lang="python"><pre><code>@classmethod
+def generate(cls) -&gt; UserId:
+    return cls(uuid.uuid7())      # UUIDv7, pas uuid4
+
+@classmethod
+def from_string(cls, raw: str) -&gt; UserId:
+    try:
+        return cls(uuid.UUID(raw))
+    except ValueError as exc:
+        raise InvalidUserId(raw) from exc   # erreur métier, pas ValueError brute</code></pre></div>
+
+<ul>
+  <li><strong>UUIDv7</strong> (stdlib depuis Python 3.14) est ordonné
+      temporellement, ce qui améliore généralement la localité des insertions dans
+      un index B-tree par rapport à <code>uuid4()</code>. Ce n'est pas une
+      garantie absolue et ça ne remplace pas une stratégie d'indexation adaptée
+      aux requêtes réelles. Le point qui compte ici est ailleurs :
+      <strong>l'identité est générée par le domaine</strong>, sans round-trip vers
+      la base.</li>
+  <li><code>from_string</code> traduit une erreur technique
+      (<code>ValueError</code>) en <strong>erreur métier</strong>
+      (<code>InvalidUserId</code>), qui deviendra un 422 à la frontière HTTP. Le
+      domaine ne laisse pas fuiter les exceptions de la stdlib vers le haut.</li>
+</ul>
+
+<div class="warn">
+  <strong>UUIDv7 n'est pas une mesure de sécurité</strong>
+  Il n'est pas séquentiel comme un auto-increment, mais il <strong>révèle
+  l'instant de création</strong>. Si la confidentialité des identifiants compte,
+  c'est une décision à prendre séparément.
+</div>
+
+<h2 id="entités--définies-par-leur-identité">Entités : définies par leur identité<a class="anchor" href="#entités--définies-par-leur-identité" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Une entité a une <strong>identité stable dans le temps</strong>. Une
+<code>Task</code> reste « la même tâche » quand son titre change. Deux entités
+sont égales si elles ont le même identifiant &mdash; pas la même valeur.</p>
+
+<div class="snippet" data-lang="python"><pre><code>def __eq__(self, other: object) -&gt; bool:
+    return isinstance(other, Task) and other.id == self.id
+
+def __hash__(self) -&gt; int:
+    return hash(self.id)</code></pre></div>
+
+<p>Note le <code>__hash__</code> : Python le met à <code>None</code> dès qu'on
+définit <code>__eq__</code>. Sans lui, une <code>Task</code> ne pourrait plus
+entrer dans un <code>set</code> ni servir de clé de <code>dict</code>.</p>
+
+<h2 id="les-invariants-vivent-dans-lentité">Les invariants vivent dans l'entité<a class="anchor" href="#les-invariants-vivent-dans-lentité" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Un <strong>invariant</strong> est une règle qui doit rester vraie à tout
+instant. Le point crucial : l'entité protège <strong>ses propres</strong>
+invariants via ses méthodes. On ne modifie pas son état de l'extérieur en
+assignant ses attributs.</p>
+
+<div class="snippet" data-lang="python"><pre><code>task.status = TaskStatus.DONE   # ❌ contourne la règle, completed_at reste None
+task.complete()                 # ✅ la règle et la cohérence sont garanties</code></pre></div>
+
+<p>C'est le <strong>modèle riche</strong> (l'objet a du comportement), par
+opposition au <strong>modèle anémique</strong> (un sac de données que du code
+extérieur manipule).</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Modèle anémique</th><th>Modèle riche</th></tr></thead>
+  <tbody>
+    <tr><td>L'objet contient</td><td>des attributs</td><td>des attributs <strong>et</strong> des comportements</td></tr>
+    <tr><td>La règle vit</td><td>dans les services / routers</td><td>dans l'objet</td></tr>
+    <tr><td>Un nouvel appelant</td><td>doit reconnaître la règle</td><td>l'obtient gratuitement</td></tr>
+    <tr><td>Symptôme</td><td>des setters partout</td><td>des verbes métier (<code>complete</code>, <code>rename</code>)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>Nuance Python</strong>
+  Ce projet laisse les attributs de <code>Task</code> publics : rien n'empêche
+  techniquement <code>task.status = ...</code>. Un modèle plus strict les
+  préfixerait <code>_status</code> et exposerait des <code>@property</code> en
+  lecture seule. C'est un curseur : plus de protection contre plus de cérémonie.
+  Ce qui compte est que le chemin <strong>prévu</strong> passe par les méthodes, et
+  que la revue de code sanctionne l'autre. Retiens le principe, pas la syntaxe.
+  <p><strong>Ce que l'outillage peut faire.</strong> La revue de code n'est pas le
+  seul recours. Le jour où l'on passe aux propriétés, deux garde-fous
+  <em>existants</em> ferment les deux contournements sans une ligne d'outillage sur
+  mesure : mypy strict refuse <code>task.status = X</code>
+  (<em>« Property "status" is read-only »</em>), et la règle Ruff
+  <code>SLF001</code> refuse la porte de service <code>task._status = X</code>.
+  Cette dernière est déjà activée dans ce dépôt &mdash; elle attend le refactoring.
+  En revanche, <strong>aucun linter ne peut rien tant que les attributs sont
+  publics</strong> : sans inférence de types, il ne sait pas que <code>task</code>
+  est une <code>Task</code>. C'est ce qui fait de l'encapsulation un choix de
+  conception, pas un réglage d'outil.</p>
+</div>
+
+<h2 id="les-factories--construire-un-objet-valide">Les factories : construire un objet valide<a class="anchor" href="#les-factories--construire-un-objet-valide" aria-label="Lien vers cette section">#</a></h2>
+
+<p><code>Task.create()</code> est une <strong>factory</strong> : elle produit un
+objet dans un état initial cohérent (statut <code>TODO</code>,
+<code>created_at</code> renseigné, <code>completed_at</code> à <code>None</code>,
+identité générée). Le constructeur brut, lui, sert à <strong>reconstituer</strong>
+une tâche existante &mdash; c'est ce qu'utilise le mapper de persistance
+(<a href="./07-adaptateurs.html">ch. 07</a>).</p>
+
+<p>Deux intentions différentes, deux points d'entrée : « créer quelque chose de
+neuf » ≠ « rematérialiser quelque chose qui existe déjà ».</p>
+
+<h2 id="les-exceptions-métier">Les exceptions métier<a class="anchor" href="#les-exceptions-métier" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Les erreurs du domaine sont des <strong>exceptions métier</strong>, pas des
+codes HTTP. Le domaine ignore HTTP ; il lève <code>TaskNotFound</code>,
+<code>EmailAlreadyUsed</code>, et c'est la présentation qui traduira
+(<a href="./08-transactions-et-erreurs.html">ch. 08</a>).</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/shared/exceptions.py
+class DomainError(Exception): ...
+class ValidationError(DomainError): ...   # invariant de VO non respecté
+class NotFoundError(DomainError): ...     # ressource introuvable
+class ConflictError(DomainError): ...     # conflit d'unicité ou d'état</code></pre></div>
+
+<p><strong>Attention à ne pas tout ranger sous <code>DomainError</code>.</strong>
+Une base injoignable, un timeout SMTP, un broker indisponible ne sont pas des
+erreurs métier. Ce projet leur donne une hiérarchie parallèle,
+<code>InfrastructureError</code> (<code>application/shared/errors.py</code>),
+traduite en 503 et non en 4xx. La distinction est développée au
+<a href="./08-transactions-et-erreurs.html#3-deux-familles-derreurs">chapitre 08</a>.</p>
+
+<h2 id="pourquoi-pas-pydantic-dans-le-domaine-">Pourquoi pas Pydantic dans le domaine ?<a class="anchor" href="#pourquoi-pas-pydantic-dans-le-domaine-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Question légitime : ce serait plus concis. L'argument tient en une phrase :</p>
+
+<blockquote>
+  <p>Le domaine ne devrait pas dépendre d'une bibliothèque de
+  validation/sérialisation dont il n'a pas besoin.</p>
+</blockquote>
+
+<p>Pydantic est excellent &mdash; ce projet s'en sert massivement pour les schémas
+HTTP et la configuration, et le <a href="./07-adaptateurs.html">chapitre 07</a>
+montre pourquoi c'est le bon outil <strong>à la frontière</strong>. Simplement,
+dans le cœur, il apporte des fonctionnalités (parsing, coercition, sérialisation
+JSON) que le domaine n'utilise pas, au prix d'une dépendance externe à l'endroit
+qui devrait être le plus stable du projet. Les <code>dataclass</code> de la stdlib
+offrent l'essentiel du confort pour zéro dépendance.</p>
+
+<p>Ce n'est pas une loi : certaines équipes acceptent Pydantic dans le domaine en
+assumant d'en suivre le cycle de vie. Le point non négociable est de savoir
+<strong>pourquoi</strong> on l'y met, plutôt que de l'y trouver par défaut.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Value object</strong> : la propriété définissante est l'<strong>égalité
+      par valeur</strong>. Immuabilité et auto-validation sont des pratiques,
+      excellentes, qui en découlent.</li>
+  <li>Un VO valide une <strong>forme</strong>, jamais un fait du monde extérieur :
+      <strong>aucune I/O</strong> dans le domaine.</li>
+  <li><strong>Entité</strong> : identité stable, égalité par id (et n'oublie pas
+      <code>__hash__</code>).</li>
+  <li>Les <strong>invariants</strong> vivent dans l'entité : on change l'état par
+      des verbes métier, pas par des affectations.</li>
+  <li>Modèle <strong>riche</strong> &gt; modèle <strong>anémique</strong>.</li>
+  <li>Le domaine lève des <strong>exceptions métier</strong> ; les erreurs
+      techniques ont leur propre hiérarchie.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Écris un value object <code>Money</code> (montant + devise) : refuse un
+        montant négatif, refuse l'addition de deux devises différentes. Quelle
+        méthode dois-tu ajouter pour que
+        <code>Money(10, "EUR") == Money(10, "EUR")</code> soit vrai &mdash; et
+        pourquoi <code>dataclass</code> te la donne-t-elle gratuitement,
+        contrairement à <code>Task</code> ?</li>
+    <li>Un collègue ajoute à <code>Email</code> une vérification que le domaine
+        possède bien un enregistrement MX. Cite deux conséquences concrètes sur
+        les tests unitaires du domaine.</li>
+    <li><code>Task.rename()</code> accepte de renommer une tâche
+        <code>DONE</code>. Où irait la garde si le métier décidait de l'interdire
+        &mdash; et où <strong>surtout pas</strong> ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-03">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./02-ou-vit-une-regle.html">&larr; 02. Où vit une règle ?</a>
+  <a href="./04-les-agregats.html">04. Les agrégats &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

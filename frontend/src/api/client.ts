@@ -7,6 +7,7 @@ import type {
   UpdateUserPayload,
   User,
   ShareTaskPayload,
+  TaskWithOwner,
 } from './types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
@@ -121,5 +122,50 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     })
+  },
+
+  /** Nombre de lignes que l'export produirait — sert à afficher une progression. */
+  countExportableTasks() {
+    return request<{ count: number }>('/api/v1/exports/tasks/count')
+  },
+
+  /**
+   * Export global : toutes les tâches avec leur propriétaire.
+   *
+   * Le serveur diffuse du NDJSON (un objet JSON par ligne) plutôt qu'un tableau :
+   * il n'a jamais tout l'export en mémoire. On lit donc le flux au fil de l'eau et
+   * on rappelle `onProgress` à chaque lot — d'où une barre de progression possible,
+   * ce qu'un `await response.json()` interdirait.
+   *
+   * ⚠️ Le statut HTTP arrive avec le premier octet : une coupure en cours de flux
+   * ne se voit pas dans `response.ok`. C'est pourquoi on compare le nombre de
+   * lignes reçues au compte annoncé.
+   */
+  async exportTasks(onProgress?: (received: number) => void): Promise<TaskWithOwner[]> {
+    const response = await fetch(`${API_BASE}/api/v1/exports/tasks`, {
+      headers: { Accept: 'application/x-ndjson' },
+    })
+    if (!response.ok || !response.body) {
+      throw new ApiError('Export impossible', response.status)
+    }
+
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    const items: TaskWithOwner[] = []
+    let reste = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      reste += value
+      const lignes = reste.split('\n')
+      reste = lignes.pop() ?? ''            // la dernière peut être incomplète
+      for (const ligne of lignes) {
+        if (ligne) items.push(JSON.parse(ligne) as TaskWithOwner)
+      }
+      onProgress?.(items.length)
+    }
+    if (reste.trim()) items.push(JSON.parse(reste) as TaskWithOwner)
+
+    return items
   },
 }

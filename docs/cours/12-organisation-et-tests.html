@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12. Organisation &amp; tests &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Couche et bounded context sont orthogonaux. Trois niveaux de tests : domaine pur, use cases sur ports doublés, intégration sur PostgreSQL et Valkey réels.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html" aria-current="page"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>12. Organisation &amp; tests</h1>
+  <p class="lede">Comment ranger le code &mdash; et pourquoi la facilité à le
+  tester est le meilleur juge de l'architecture.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Couche et bounded context sont deux dimensions
+  <strong>orthogonales</strong> : ce projet tranche verticalement à chaque couche.
+  Trois niveaux de tests, pas deux : domaine pur, use cases avec doublures,
+  intégration sur les moteurs réels (testcontainers).
+</div>
+
+<h2 id="deux-dimensions-pas-une">Deux dimensions, pas une<a class="anchor" href="#deux-dimensions-pas-une" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Beaucoup de discussions « par couche ou par feature ? » sont mal posées : ce ne
+sont pas deux options concurrentes, ce sont deux <strong>axes</strong> d'un même
+plan.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>task</code></th><th><code>user</code></th><th>transverse</th></tr></thead>
+  <tbody>
+    <tr><td><strong>presentation</strong></td><td><code>v1/routers/tasks.py</code></td><td><code>v1/routers/users.py</code></td><td><code>app.py</code>, <code>error_handlers.py</code>, <code>dependencies/session.py</code></td></tr>
+    <tr><td><strong>infrastructure</strong></td><td><code>persistence/task/</code></td><td><code>persistence/user/</code></td><td><code>persistence/database.py</code>, <code>config.py</code>, <code>cache/</code>, <code>mail/</code></td></tr>
+    <tr><td><strong>application</strong></td><td><code>application/task/</code></td><td><code>application/user/</code></td><td><code>application/shared/</code> (ports techniques, erreurs)</td></tr>
+    <tr><td><strong>domain</strong></td><td><code>domain/task/</code></td><td><code>domain/user/</code></td><td><code>domain/shared/</code> (bases d'exceptions)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Les <strong>couches</strong> répondent à « quel type de responsabilité ? ». Les
+<strong>contextes</strong> répondent à « quel morceau de métier ? ». La question
+réelle est : <em>dans quel sens découpe-t-on les dossiers en premier ?</em></p>
+
+<p>Ce projet découpe <strong>par couche d'abord, par contexte ensuite</strong>.
+Pourquoi ce sens : la règle de dépendance est vérifiée entre couches
+(import-linter), donc les couches doivent être des frontières physiques évidentes.
+À l'échelle supérieure &mdash; si <code>task</code> et <code>user</code> devenaient
+deux services &mdash; on inverserait probablement.</p>
+
+<h2 id="le-découpage-vertical-concrètement">Le découpage vertical, concrètement<a class="anchor" href="#le-découpage-vertical-concrètement" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="text"><pre><code>domain/task/          domain/user/
+application/task/     application/user/
+persistence/task/     persistence/user/
+v1/schemas/task.py    v1/schemas/user.py
+v1/routers/tasks.py   v1/routers/users.py
+dependencies/task.py  dependencies/user.py</code></pre></div>
+
+<p>Le bénéfice : on travaille <strong>par fonctionnalité</strong>. Ajouter un
+contexte = ajouter des dossiers, sans toucher aux fichiers existants. On lit un
+contexte de bout en bout sans naviguer dans dix fichiers fourre-tout.</p>
+
+<p>Le coût, à connaître : un peu de duplication structurelle entre contextes
+(chaque contexte a son mapper, son repository, ses schémas) et la tentation de
+partager trop vite. La bonne réponse à « ces deux contextes se ressemblent » est le
+plus souvent <strong>rien du tout</strong> : deux contextes qui évoluent séparément
+ont le droit de se ressembler aujourd'hui et de diverger demain. Le vrai transverse
+(<code>domain/shared/</code>, <code>application/shared/</code>,
+<code>persistence/database.py</code>) est ce qui n'appartient à <strong>aucun</strong>
+métier.</p>
+
+<h3 id="la-bonne-dose-de-centralisation">La bonne dose de centralisation<a class="anchor" href="#la-bonne-dose-de-centralisation" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Nuance apprise dans ce projet : <strong>on ne découpe pas tout
+mécaniquement</strong>.</p>
+
+<ul>
+  <li>La composition root (<code>dependencies/</code>) garde un
+      <code>__init__.py</code> <strong>façade</strong> qui réexpose tout, parce que
+      son intérêt <em>est</em> d'être un point d'entrée unique.</li>
+  <li>Les schémas (<code>v1/schemas/</code>) sont simplement découpés,
+      <strong>sans façade</strong> : ce sont des contrats par contexte, sans rôle
+      centralisateur.</li>
+</ul>
+
+<p>Le découpage sert la lisibilité ; ce n'est pas un dogme à appliquer partout. Une
+façade ajoutée « pour la symétrie » est du couplage gratuit.</p>
+
+<h4 id="le-compromis-de-la-façade">Le compromis de la façade<a class="anchor" href="#le-compromis-de-la-façade" aria-label="Lien vers cette section">#</a></h4>
+
+<p>C'est un choix, pas une recommandation générale &mdash; et il a un coût qu'il
+faut nommer plutôt que passer sous silence.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th>Avec façade (ce projet)</th><th>Sans façade</th></tr></thead>
+  <tbody>
+    <tr><td>Import dans un router</td><td>une ligne, une seule origine</td><td>un import par module de dépendances</td></tr>
+    <tr><td>Ajouter un use case</td><td>un provider <strong>et</strong> une entrée dans <code>__all__</code></td><td>un provider, c'est tout</td></tr>
+    <tr><td>Travail à plusieurs</td><td>tout le monde édite le même fichier → conflits Git</td><td>chacun touche son contexte</td></tr>
+    <tr><td>Coût à l'import</td><td>charger la façade charge <em>tous</em> les providers</td><td>on ne charge que ce qu'on utilise</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Deux précisions, parce que la critique habituelle de ce motif vise souvent à
+côté :</p>
+
+<ul>
+  <li><strong>La façade ne couple pas les contextes entre eux.</strong>
+      <code>dependencies/task.py</code> n'importe pas
+      <code>dependencies/user.py</code> : c'est l'agrégateur qui dépend des parties,
+      jamais l'inverse. Le sens de la dépendance est ce qui distingue une façade
+      d'un couplage.</li>
+  <li><strong>La verbosité du <code>__all__</code> n'est pas de la cérémonie.</strong>
+      En mypy strict, <code>no_implicit_reexport</code> est actif : sans liste
+      explicite, les noms importés dans un <code>__init__.py</code> ne sont pas
+      réexportés. Le boilerplate vient du vérificateur de types, pas du motif.</li>
+</ul>
+
+<p>Le seuil de bascule est simple à énoncer : <strong>la façade paie tant qu'une
+seule personne touche ce fichier.</strong> À plusieurs, ou passé quelques dizaines
+de providers, la maintenance de <code>__all__</code> coûte plus qu'elle ne
+rapporte &mdash; et des <code>dependencies/</code> par contexte, importés
+directement par chaque router, deviennent le meilleur choix.</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Composition root</td><td>La décision d'association port ↔ adaptateur reste en un point unique</td><td>Façade <code>__init__.py</code> : un import, au prix d'un fichier partagé</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="les-trois-niveaux-de-tests">Les trois niveaux de tests<a class="anchor" href="#les-trois-niveaux-de-tests" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Il y en a bien trois, et le niveau intermédiaire est celui qu'on oublie le plus
+souvent.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 700 280" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Pyramide de tests : à la base 72 tests de domaine purs, sans entrée-sortie, en microsecondes ; au milieu 10 tests de use cases sur des ports en mémoire, en millisecondes ; au sommet 29 tests d'intégration sur PostgreSQL et Valkey réels, en secondes.">
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <polygon points="130,24 210,24 230,92 110,92" fill="var(--surface)" stroke="var(--line)"/>
+    <polygon points="108,98 232,98 252,166 88,166" fill="var(--surface)" stroke="var(--line)"/>
+    <polygon points="86,172 254,172 278,246 62,246" fill="var(--raised)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="17" font-weight="600" text-anchor="middle">
+      <text x="170" y="65">29</text>
+      <text x="170" y="139">10</text>
+    </g>
+    <text x="170" y="216" fill="var(--accent)" font-size="17" font-weight="600" text-anchor="middle">72</text>
+
+    <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3">
+      <line x1="232" y1="58" x2="300" y2="58"/>
+      <line x1="254" y1="132" x2="300" y2="132"/>
+      <line x1="280" y1="209" x2="300" y2="209"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="12.5" font-weight="600">
+      <text x="308" y="48">Intégration</text>
+      <text x="308" y="122">Use cases</text>
+      <text x="308" y="199">Domaine</text>
+    </g>
+    <g fill="var(--muted)" font-size="10.5">
+      <text x="308" y="64">HTTP → use case → domaine → PostgreSQL + Valkey réels</text>
+      <text x="308" y="78">secondes</text>
+      <text x="308" y="138">use case + ports en mémoire (_fakes.py)</text>
+      <text x="308" y="152">millisecondes</text>
+      <text x="308" y="215">entités, value objects, invariants &#183; zéro I/O</text>
+      <text x="308" y="229">microsecondes</text>
+    </g>
+  </g>
+</svg>
+</figure>
+
+<h3 id="1-le-domaine--pur-et-instantané">1. Le domaine : pur et instantané<a class="anchor" href="#1-le-domaine--pur-et-instantané" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Aucune base, aucun HTTP, aucun mock. Juste des objets.</p>
+
+<div class="snippet" data-lang="python"><pre><code># tests/unit/domain/test_task_entity.py
+def test_complete_twice_is_rejected() -&gt; None:
+    task = Task.create(owner_id=UserId.generate(), title=TaskTitle("x"))
+    task.complete()
+    with pytest.raises(TaskAlreadyCompleted):
+        task.complete()</code></pre></div>
+
+<p>C'est <em>possible et facile</em> précisément parce que le domaine ne dépend
+d'aucun framework (<a href="./01-regle-de-dependance.html">ch. 01</a>). <strong>Si
+tes règles métier sont dures à tester, c'est le signe qu'elles sont mélangées à de
+la technique</strong> &mdash; le juge de paix le plus fiable de toute cette
+architecture.</p>
+
+<h3 id="2-les-use-cases--ports-doublés-en-mémoire">2. Les use cases : ports doublés en mémoire<a class="anchor" href="#2-les-use-cases--ports-doublés-en-mémoire" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le niveau intermédiaire teste l'<strong>orchestration</strong> : les branches,
+les cas d'erreur, les interactions entre ports &mdash; sans I/O.</p>
+
+<div class="snippet" data-lang="python"><pre><code># tests/unit/application/_fakes.py
+class FakeTaskRepository(TaskRepository):
+    def __init__(self, tasks: list[Task] | None = None) -&gt; None:
+        self._by_id: dict[TaskId, Task] = {t.id: t for t in (tasks or [])}
+        self.saved: list[Task] = []
+
+    async def save(self, task: Task) -&gt; None:
+        self._by_id[task.id] = task
+        self.saved.append(task)          # on enregistre pour pouvoir l'asserter
+
+    async def get(self, task_id: TaskId) -&gt; Task:
+        try:
+            return self._by_id[task_id]
+        except KeyError:
+            raise TaskNotFound(str(task_id)) from None</code></pre></div>
+
+<div class="snippet" data-lang="python"><pre><code># tests/unit/application/test_create_task.py (esprit)
+async def test_create_task_rejects_unknown_owner() -&gt; None:
+    use_case = CreateTask(FakeTaskRepository(), FakeUserRepository())
+    with pytest.raises(UserNotFound):
+        await use_case.execute(CreateTaskCommand(owner_id=str(UserId.generate()), title="x"))</code></pre></div>
+
+<p>Ce niveau est le grand bénéficiaire de l'architecture : il n'existe que parce
+que les use cases ne dépendent que de <strong>ports</strong>. Les doublures du
+projet couvrent aussi <code>FakeCache</code>, <code>RecordingPublisher</code> et
+<code>FakeSMTP</code> &mdash; ce qui permet de tester un hit de cache, une
+publication d'événement ou un échec d'envoi partiel <strong>sans Valkey, sans
+RabbitMQ, sans serveur mail</strong>.</p>
+
+<div class="note">
+  <strong>Doublures écrites à la main &gt; mocks génériques</strong>
+  Une <code>FakeTaskRepository</code> qui implémente réellement le port échoue à la
+  compilation (mypy) si le port change, là où un <code>Mock()</code> continue de
+  passer en mentant.
+</div>
+
+<h3 id="3-lintégration--les-moteurs-réels">3. L'intégration : les moteurs réels<a class="anchor" href="#3-lintégration--les-moteurs-réels" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Les tests d'intégration exercent toute la chaîne &mdash; HTTP → use case →
+domaine → base &mdash; via un client HTTP asynchrone, sur un <strong>PostgreSQL et
+un Valkey jetables</strong> démarrés par
+<a href="https://testcontainers-python.readthedocs.io/">testcontainers</a>
+(<code>tests/integration/conftest.py</code>).</p>
+
+<div class="snippet" data-lang="python"><pre><code># tests/integration/conftest.py (extrait)
+@pytest.fixture(scope="session")
+def database_url() -&gt; Iterator[str]:
+    with PostgresContainer("postgres:17-alpine", driver="asyncpg") as postgres:
+        yield postgres.get_connection_url()
+
+@pytest.fixture(scope="session")
+def redis_url() -&gt; Iterator[str]:
+    with RedisContainer("valkey/valkey:8-alpine") as valkey:
+        ...</code></pre></div>
+
+<p><strong>Pourquoi les moteurs réels et pas un substitut in-memory ?</strong>
+Parce qu'un test qui passe sur un dialecte que la production n'utilise pas ne
+prouve pas grand-chose. Ici on exerce vraiment le type <code>uuid</code> natif,
+<code>timestamptz</code>, les violations d'unicité, le
+<code>ON DELETE CASCADE</code>, et le protocole Redis. Le prix : quelques secondes
+au démarrage de la suite, et <strong>un démon Docker obligatoire</strong>.</p>
+
+<p>Les conteneurs rendent aussi la suite <strong>hermétique</strong>. Sans eux, un
+Redis qui écoute sur le port par défaut de la machine &mdash; la stack
+<code>docker compose</code> du projet, typiquement &mdash; serait utilisé par les
+tests, qui liraient alors des entrées laissées par un run précédent.</p>
+
+<p><strong>Ce que la fixture <code>client</code> remplace, exactement.</strong> Elle
+monte la <strong>vraie</strong> application (routers, DI, handlers d'erreurs
+authentiques) et surcharge deux choses seulement :</p>
+
+<ul>
+  <li><code>get_session</code> → une dépendance équivalente (mêmes
+      <code>commit</code>/<code>rollback</code>) pointant sur la <strong>même base
+      de test</strong> que les fixtures de seed. Ce n'est <strong>pas</strong> une
+      base in-memory : c'est le PostgreSQL du conteneur ;</li>
+  <li>l'adaptateur de messagerie → un publisher inerte, pour ne pas exiger un
+      RabbitMQ réel.</li>
+</ul>
+
+<p>Le reste du câblage est celui de la production. C'est la composition root
+(<a href="./08-transactions-et-erreurs.html#4-la-composition-root">ch. 08</a>) qui
+rend cette substitution chirurgicale.</p>
+
+<p>Deux autres choix de la conftest valent d'être notés :</p>
+
+<ul>
+  <li><strong>Schéma créé et détruit à chaque test</strong> (<code>create_all</code>
+      / <code>drop_all</code>) : isolation totale, aucune dépendance à l'ordre
+      d'exécution.</li>
+  <li><strong>Les données de départ sont semées via les use cases</strong>, jamais
+      en SQL brut. Un seed SQL peut créer un état que le code métier n'aurait jamais
+      produit &mdash; et donc tester une situation impossible.</li>
+</ul>
+
+<div class="snippet" data-lang="python"><pre><code># tests/integration/api/test_users_api.py
+async def test_list_user_tasks_returns_only_owned_tasks(client):
+    alice = await _create_user(client, email="alice@example.com")
+    await client.post(f"/api/v1/users/{alice}/tasks", json={"title": "T1"})
+    tasks = await client.get(f"/api/v1/users/{alice}/tasks")
+    assert all(t["owner_id"] == alice for t in tasks.json())</code></pre></div>
+
+<h3 id="la-règle-de-répartition">La règle de répartition<a class="anchor" href="#la-règle-de-répartition" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Ce que tu testes</th><th>Niveau</th></tr></thead>
+  <tbody>
+    <tr><td>Un invariant, une validation, une transition d'état</td><td>Domaine</td></tr>
+    <tr><td>Une orchestration, une branche d'erreur, un hit/miss de cache</td><td>Use case (fakes)</td></tr>
+    <tr><td>Un parcours complet, un code HTTP, une contrainte SQL, un comportement du moteur</td><td>Intégration</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le principe : <strong>on ne teste pas deux fois la même chose</strong>. Vérifier
+« titre vide refusé » dans un test d'intégration, alors qu'un test de domaine le
+couvre déjà, ajoute des secondes de suite pour zéro information.</p>
+
+<p>La répartition réelle de ce projet &mdash; 72 / 10 / 29 &mdash; n'est pas un
+objectif à copier. C'est ce que produit le principe ci-dessus appliqué à ce
+métier-là. Un domaine plus riche ferait grossir la base ; un domaine anémique la
+ferait disparaître, ce qui serait le vrai signal d'alarme.</p>
+
+<h2 id="les-garde-fous-automatisés">Les garde-fous automatisés<a class="anchor" href="#les-garde-fous-automatisés" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="bash"><pre><code>make lint     # ruff + import-linter + mypy strict
+make test     # les trois niveaux
+make check    # = lint + test, reproduit la CI en local</code></pre></div>
+
+<p><code>make imports</code> (import-linter) est le test d'architecture du
+<a href="./01-regle-de-dependance.html#comment-on-la-vérifie-ici">chapitre 01</a> :
+il tourne en pre-commit et en CI. Une règle d'architecture non vérifiée se dégrade
+en quelques mois &mdash; celle-ci ne peut pas.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Couche et bounded context sont <strong>orthogonaux</strong> ; ce projet
+      découpe par couche d'abord, par contexte ensuite, pour que les couches restent
+      des frontières vérifiables.</li>
+  <li>Le découpage sert la lisibilité, pas la symétrie (façade pour la composition
+      root, pas pour les schémas).</li>
+  <li><strong>Trois</strong> niveaux de tests : domaine pur, use cases avec
+      doublures maison, intégration sur les moteurs réels.</li>
+  <li>Les tests d'intégration visent <strong>PostgreSQL et Valkey réels</strong> ;
+      seule la dépendance de session et le publisher sont substitués.</li>
+  <li>Un domaine difficile à tester est un domaine mal isolé : c'est le juge de
+      paix.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Tu ajoutes la règle « un titre ne peut pas contenir d'URL ». À quel niveau
+        écris-tu le test, et combien de tests au total ?</li>
+    <li>La fixture <code>client</code> surcharge <code>get_session</code> par une
+        dépendance qui commit et rollback à l'identique. Que testerait-on en moins
+        si elle committait systématiquement, sans <code>try/except</code> ?</li>
+    <li>Pourquoi les fixtures de seed passent-elles par <code>CreateUser</code>
+        plutôt que par un <code>INSERT</code> SQL ? Donne un bug qu'un seed SQL
+        pourrait masquer.</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-12">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./11-cache-et-evenements.html">&larr; 11. Cache &amp; événements</a>
+  <a href="./13-demarrer-un-projet.html">13. Démarrer un projet &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

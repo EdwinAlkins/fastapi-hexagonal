@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01. Les données &mdash; Infrastructure &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="CloudNativePG en 3 instances avec anti-affinité requise, PgBouncer en mode transaction, et pourquoi les migrations Alembic contournent le pooler.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html">Cours</a>
+    <a href="../infra/index.html" aria-current="true">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Sections de l'infrastructure">
+  <h2>Infrastructure</h2>
+  <ul>
+    <li><a href="./index.html">Vue d'ensemble</a></li>
+    <li><a href="./00-compose.html"><span class="num">00</span>Docker Compose</a></li>
+    <li><a href="./01-donnees.html" aria-current="page"><span class="num">01</span>Les données</a></li>
+    <li><a href="./02-workloads.html"><span class="num">02</span>Les workloads</a></li>
+    <li><a href="./03-resilience.html"><span class="num">03</span>Résilience</a></li>
+    <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
+    <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+  </ul>
+  <h2>Voir aussi</h2>
+  <ul>
+    <li><a href="../cours/index.html">Le cours</a></li>
+    <li><a href="../cours/08-transactions-et-erreurs.html">Transactions &amp; erreurs</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>01. Les données</h1>
+  <p class="lede">PostgreSQL en haute disponibilité, un pooler en mode transaction,
+  et la contrainte qui remonte jusque dans le moteur SQLAlchemy.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Un <code>Cluster</code> CloudNativePG de 3
+  instances avec anti-affinité <strong>requise</strong>, un <code>Pooler</code>
+  PgBouncer de 2 pods en mode <strong>transaction</strong>. Ce mode dicte trois
+  réglages côté application, et impose que les migrations Alembic
+  <strong>contournent le pooler</strong>.
+</div>
+
+<h2 id="pourquoi-un-opérateur">Pourquoi un opérateur plutôt qu'un StatefulSet<a class="anchor" href="#pourquoi-un-opérateur" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Une base de données n'est pas un workload comme un autre : elle a un état, un
+primaire, des réplicas, et un basculement à orchestrer quand le primaire disparaît.
+Écrire ça soi-même dans un <code>StatefulSet</code> revient à réimplémenter, mal,
+ce qu'un opérateur fait déjà.</p>
+
+<p><a href="https://cloudnative-pg.io/">CloudNativePG</a> prend en charge la
+réplication en flux, l'élection d'un nouveau primaire, les <em>Services</em>
+<code>-rw</code> / <code>-ro</code> qui suivent les rôles, et le pooler. On lui
+décrit l'état voulu, il s'occupe du reste.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/database.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: task-manager-db
+  namespace: task-manager
+spec:
+  instances: 3                    # 1 primaire + 2 réplicas
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required # une instance par nœud, sans exception
+  storage:
+    size: 1Gi
+  bootstrap:
+    initdb:
+      database: task_manager
+      owner: task_manager</code></pre></div>
+
+<h3 id="required-plutôt-que-preferred">Pourquoi <code>required</code> et pas <code>preferred</code><a class="anchor" href="#required-plutôt-que-preferred" aria-label="Lien vers cette section">#</a></h3>
+
+<p>C'est le choix le plus lourd de conséquence du fichier, et il mérite d'être
+explicite.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><code>preferred</code></th><th><code>required</code> (retenu)</th></tr></thead>
+  <tbody>
+    <tr><td>Placement</td><td>Le scheduler essaie de répartir</td><td>Une instance par nœud, garanti</td></tr>
+    <tr><td>Si moins de 3 nœuds</td><td>Tout se schedule quand même</td><td>Une instance reste <code>Pending</code></td></tr>
+    <tr><td>Perte d'un nœud</td><td>Peut emporter 2 instances sur 3 &mdash; plus de quorum</td><td>N'emporte qu'une instance</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le mode strict échange de la souplesse de placement contre une
+<strong>garantie</strong> : la perte d'un nœud laisse deux instances debout, donc
+un failover possible. C'est exactement ce que le cluster à 3 workers rend testable
+&mdash; et la raison pour laquelle <code>kind-config.yaml</code> en déclare trois
+et pas un.</p>
+
+<div class="note">
+  <strong>Réplication asynchrone, par défaut</strong>
+  Le manifeste laisse la réplication en asynchrone : priorité à la latence et à la
+  disponibilité des écritures. Un bloc <code>postgresql.synchronous</code> commenté
+  permet de passer en synchrone pour un RPO proche de zéro &mdash; au prix
+  d'écritures qui bloquent si trop peu de réplicas répondent. Le compromis est posé
+  dans le fichier, pas caché.
+</div>
+
+<h2 id="le-pooler">Le pooler : deux pods, mode transaction<a class="anchor" href="#le-pooler" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="yaml"><pre><code>apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: task-manager-pooler
+spec:
+  cluster:
+    name: task-manager-db
+  instances: 2                    # PgBouncer est stateless → pas de SPOF
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "20"     # ⚠️ PAR pod : 2 × 20 = 40 connexions serveur</code></pre></div>
+
+<p>Deux détails qui se paient cher si on les rate :</p>
+
+<ul>
+  <li><strong><code>default_pool_size</code> est par pod.</strong> Avec 2 pods, le
+      pooler ouvre jusqu'à <strong>40</strong> connexions serveur vers le primaire.
+      C'est dimensionné sous le <code>max_connections</code> de PostgreSQL (100 par
+      défaut). Passer les poolers à 5 sans y penser, et la base refuse des
+      connexions.</li>
+  <li><strong>Le Service s'appelle <code>task-manager-pooler</code></strong>, sans
+      suffixe. Le <code>-rw</code> appartient au <code>Cluster</code> et vise le
+      primaire <em>en direct</em> &mdash; c'est celui qu'utilisent les migrations,
+      justement.</li>
+</ul>
+
+<h2 id="ce-que-le-mode-transaction-impose-au-code">Ce que le mode transaction impose au code<a class="anchor" href="#ce-que-le-mode-transaction-impose-au-code" aria-label="Lien vers cette section">#</a></h2>
+
+<p>En mode transaction, une connexion serveur n'est prêtée à un client que le temps
+d'une transaction, puis rendue au pool. Plusieurs clients sont donc
+<strong>multiplexés</strong> sur la même connexion PostgreSQL. Trois conséquences,
+à trois endroits :</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 700 250" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Le mode transaction du pooler entraîne trois réglages : la désactivation du cache de prepared statements dans l'URL du manifeste, un nom d'énoncé unique et un pool_pre_ping dans le moteur SQLAlchemy, et des migrations Alembic dirigées vers PostgreSQL en direct.">
+  <defs>
+    <marker id="fd1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <rect x="180" y="14" width="330" height="46" rx="8" fill="var(--raised)" stroke="var(--accent)"/>
+    <text x="345" y="36" fill="var(--accent)" font-size="13" font-weight="600" text-anchor="middle">PgBouncer &#183; poolMode: transaction</text>
+    <text x="345" y="52" fill="var(--muted)" font-size="10.5" text-anchor="middle">une connexion serveur par transaction, clients multiplexés</text>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="8" y="112" width="215" height="76" rx="7"/>
+      <rect x="242" y="112" width="215" height="76" rx="7"/>
+      <rect x="476" y="112" width="216" height="76" rx="7"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
+      <text x="115" y="134">URL de connexion</text>
+      <text x="349" y="134">Moteur SQLAlchemy</text>
+      <text x="584" y="134">Migrations</text>
+    </g>
+    <g fill="var(--muted)" font-size="10" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
+      <text x="115" y="153">prepared_statement</text>
+      <text x="115" y="166">_cache_size=0</text>
+      <text x="349" y="153">prepared_statement_name_func</text>
+      <text x="349" y="166">pool_pre_ping=True</text>
+      <text x="584" y="153">task-manager-db-rw</text>
+    </g>
+    <text x="584" y="168" fill="var(--muted)" font-size="10" text-anchor="middle">(contourne le pooler)</text>
+
+    <g fill="var(--muted)" font-size="10" text-anchor="middle">
+      <text x="115" y="206">api-deployment.yaml</text>
+      <text x="349" y="206">persistence/database.py</text>
+      <text x="584" y="206">migrate-job.yaml</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#fd1)">
+      <path d="M 260 60 L 115 88 L 115 108"/>
+      <path d="M 345 60 L 349 108"/>
+      <path d="M 430 60 L 584 88 L 584 108"/>
+    </g>
+
+    <text x="350" y="238" fill="var(--muted)" font-size="10.5" text-anchor="middle">Une seule décision d'infrastructure, trois fichiers dans trois couches différentes.</text>
+  </g>
+</svg>
+</figure>
+
+<h3 id="1-le-cache-dénoncés-préparés">1. Le cache d'énoncés préparés, désactivé<a class="anchor" href="#1-le-cache-dénoncés-préparés" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/api-deployment.yaml
+- name: APP_DATABASE_URL
+  value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-pooler:5432/task_manager?prepared_statement_cache_size=0"</code></pre></div>
+
+<p>Un énoncé préparé est attaché à une <em>connexion serveur</em>. Comme celle-ci
+change d'un appel à l'autre, le cache pointerait vers des énoncés qui n'existent
+plus sur la connexion courante.</p>
+
+<h3 id="2-un-nom-dénoncé-unique">2. Un nom d'énoncé unique, et <code>pool_pre_ping</code><a class="anchor" href="#2-un-nom-dénoncé-unique" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="snippet" data-lang="python"><pre><code># backend/src/task_manager/infrastructure/persistence/database.py
+return create_async_engine(
+    database_url.get_secret_value(),
+    pool_pre_ping=True,
+    pool_size=pool_size,
+    max_overflow=max_overflow,
+    connect_args={"prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__"},
+)</code></pre></div>
+
+<ul>
+  <li><strong><code>prepared_statement_name_func</code></strong> &mdash; asyncpg
+      nomme ses énoncés de façon incrémentale (<code>__asyncpg_stmt_1__</code>…).
+      Deux clients multiplexés sur la même connexion serveur choisiraient le même
+      nom et déclencheraient un <code>DuplicatePreparedStatementError</code>. Un
+      UUID par énoncé supprime la collision.</li>
+  <li><strong><code>pool_pre_ping</code></strong> &mdash; une connexion que le
+      pooler a recyclée sous nos pieds est détectée et remplacée avant usage,
+      plutôt que de faire échouer la requête.</li>
+</ul>
+
+<div class="note">
+  <strong>Ces trois réglages forment un tout</strong>
+  Ils se changent ensemble ou pas du tout. Retirer l'un des trois en gardant les
+  autres produit des erreurs intermittentes, sous charge seulement &mdash; le pire
+  profil de bug. C'est pour ça qu'ils sont documentés au même endroit dans le code
+  et ici.
+</div>
+
+<h2 id="les-migrations-contournent-le-pooler">Les migrations contournent le pooler<a class="anchor" href="#les-migrations-contournent-le-pooler" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le DDL s'accommode mal du mode transaction : verrous de longue durée, ordre des
+opérations, sessions qui doivent rester stables. Le <code>Job</code> de migration
+vise donc <strong>PostgreSQL en direct</strong> :</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/migrate-job.yaml
+- name: APP_DATABASE_URL
+  value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-db-rw:5432/task_manager"
+- name: APP_INIT_DB
+  value: "false"</code></pre></div>
+
+<p>Trois points valent d'être notés :</p>
+
+<ul>
+  <li><strong>Pas de <code>?prepared_statement_cache_size=0</code></strong> : sans
+      pooler, la contrainte disparaît. L'absence est aussi intentionnelle que la
+      présence ailleurs.</li>
+  <li><strong><code>APP_INIT_DB=false</code></strong> : le schéma est piloté par
+      Alembic, jamais par un <code>create_all</code> au démarrage. Les deux
+      mécanismes existent dans le code
+      (<a href="../cours/12-organisation-et-tests.html">ch. 12</a>) ; en cluster,
+      un seul a le droit de s'exécuter.</li>
+  <li><strong>Le Job est une barrière.</strong> <code>deploy.sh</code> attend
+      <code>--for=condition=complete</code> avant d'appliquer l'API et le worker :
+      aucun pod applicatif ne démarre sur un schéma absent ou partiel.</li>
+</ul>
+
+<div class="snippet" data-lang="bash"><pre><code># k8s/deploy.sh — la barrière
+kubectl apply -f k8s/migrate-job.yaml
+kubectl wait --for=condition=complete job/db-migrate -n task-manager --timeout=180s
+kubectl apply -f k8s/api-config.yaml
+kubectl apply -f k8s/api-deployment.yaml</code></pre></div>
+
+<p>Le Job porte <code>backoffLimit: 5</code> et <code>restartPolicy: OnFailure</code> :
+une base pas encore prête au premier essai n'échoue pas le déploiement, elle
+provoque une nouvelle tentative.</p>
+
+<h2 id="les-secrets-générés">Les secrets, générés et jamais écrits<a class="anchor" href="#les-secrets-générés" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le mot de passe de la base n'apparaît nulle part dans le dépôt. CNPG crée le
+secret <code>task-manager-db-app</code> au bootstrap ; les workloads le référencent :</p>
+
+<div class="snippet" data-lang="yaml"><pre><code>- name: DB_PASSWORD
+  valueFrom:
+    secretKeyRef: { name: task-manager-db-app, key: password }
+# puis interpolé dans l'URL
+- name: APP_DATABASE_URL
+  value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-pooler:5432/..."</code></pre></div>
+
+<p>Même principe pour RabbitMQ, dont l'opérateur génère
+<code>rabbitmq-default-user</code>. Le fichier <code>secrets.yaml</code> versionné ne
+contient que ce qui n'est pas généré &mdash; et ses valeurs sont des
+<code>change-me</code> explicites, pas des secrets déguisés en exemple.</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Une base se confie à un <strong>opérateur</strong> : failover, réplication et
+      Services suivant les rôles ne se réimplémentent pas à la main.</li>
+  <li>L'anti-affinité <strong>requise</strong> échange de la souplesse de placement
+      contre la garantie qu'un nœud perdu n'emporte qu'une instance.</li>
+  <li><code>default_pool_size</code> est <strong>par pod</strong> de pooler : le
+      total doit rester sous le <code>max_connections</code> de PostgreSQL.</li>
+  <li>Le mode transaction impose <strong>trois réglages solidaires</strong>, dans
+      trois fichiers de trois couches différentes.</li>
+  <li>Les migrations <strong>contournent le pooler</strong> et forment une
+      <strong>barrière</strong> avant tout pod applicatif.</li>
+  <li>Les mots de passe sont <strong>générés par les opérateurs</strong>, jamais
+      versionnés.</li>
+</ul>
+
+<nav class="pager">
+  <a href="./index.html">&larr; Vue d'ensemble</a>
+  <a href="./02-workloads.html">02. Les workloads &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Infrastructure FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

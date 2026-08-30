@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { api } from '../api'
 import type { User } from '../api/types'
 import { UserCard } from '../components/UserCard'
 import { Button } from '../components/ui/Button'
@@ -17,6 +18,44 @@ export function HomePage() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+
+  const [exportState, setExportState] = useState<'idle' | 'running' | 'error'>('idle')
+  const [exported, setExported] = useState(0)
+
+  /**
+   * Export global : on consomme le flux NDJSON, puis on propose le fichier.
+   *
+   * Le comptage préalable n'est pas décoratif : il permet d'afficher une
+   * progression réelle, ce que le streaming rend possible et qu'un `await
+   * response.json()` interdirait.
+   */
+  async function handleExport() {
+    setExportState('running')
+    setExported(0)
+    try {
+      const { count } = await api.countExportableTasks()
+      const items = await api.exportTasks(setExported)
+
+      if (items.length !== count) {
+        // Le statut HTTP est parti avec le premier octet : une coupure en cours
+        // de flux ne se voit que sur le nombre de lignes reçues.
+        throw new Error(`export incomplet : ${items.length} lignes sur ${count}`)
+      }
+
+      const blob = new Blob([JSON.stringify(items, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `taches-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setExportState('idle')
+    } catch {
+      setExportState('error')
+    }
+  }
 
   function selectUser(user: User) {
     setCurrentUser(user)
@@ -56,9 +95,23 @@ export function HomePage() {
             Sélectionnez un utilisateur pour ouvrir son tableau de bord.
           </p>
         </div>
-        <Button onClick={() => setFormOpen((open) => !open)}>
-          {formOpen ? 'Fermer' : 'Nouvel utilisateur'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => void handleExport()}
+            disabled={exportState === 'running'}
+            title="Télécharge toutes les tâches avec leur propriétaire"
+          >
+            {exportState === 'running'
+              ? `Export… ${exported}`
+              : exportState === 'error'
+                ? 'Export échoué — réessayer'
+                : 'Exporter'}
+          </Button>
+          <Button onClick={() => setFormOpen((open) => !open)}>
+            {formOpen ? 'Fermer' : 'Nouvel utilisateur'}
+          </Button>
+        </div>
       </div>
 
       {formOpen ? (

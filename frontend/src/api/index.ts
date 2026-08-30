@@ -5,6 +5,7 @@ export type {
   CreateUserPayload,
   PaginationParams,
   ShareTaskPayload,
+  TaskWithOwner,
   Task,
   TaskStatus,
   UpdateTaskPayload,

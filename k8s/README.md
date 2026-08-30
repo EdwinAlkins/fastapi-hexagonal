@@ -1,7 +1,7 @@
 # Déploiement Kubernetes (Kind)
 
 Manifestes pour faire tourner le stack **Task Manager** sur un cluster Kind local.
-Voir `../infra-kind-plan.md` pour les explications détaillées et la correspondance
+Voir `../docs/infra/` pour les explications détaillées et la correspondance
 docker-compose → Kubernetes.
 
 ## Prérequis
@@ -27,6 +27,10 @@ docker-compose → Kubernetes.
 | `ingress.yaml` | Entrée HTTP → frontend (`http://localhost`) |
 | `ingress-dev.yaml` | Consoles de dev via hostnames `*.localhost` |
 | `network-policies.yaml` | Segmentation réseau (qui peut parler à qui) |
+| `hpa.yaml` | Autoscaling horizontal : api 2→6, frontend 2→4 (CPU 70 % / mém. 80 %) |
+| `pdb.yaml` | PodDisruptionBudget `minAvailable: 1` (api, frontend, mail-worker) |
+| `deploy.sh` | Déploiement complet et idempotent (opérateurs, images, workloads) |
+| `clean.sh` | Suppression du cluster Kind (`--images` pour purger les images) |
 | `db-backup.sh` | Backup/restore logique de la base (`pg_dump`) dans `db-backups/` |
 
 ## Lancement
@@ -46,12 +50,18 @@ kind create cluster --config k8s/kind-config.yaml
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=180s
 
-# 2. Opérateur CloudNativePG (vérifier la dernière version sur le repo CNPG)
+# 2. Metrics Server (requis par le HPA ; sans le patch TLS, il ne remonte rien sur Kind)
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch -n kube-system deployment metrics-server --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl -n kube-system rollout status deployment metrics-server --timeout=120s
+
+# 2b. Opérateur CloudNativePG (vérifier la dernière version sur le repo CNPG)
 kubectl apply --server-side -f \
-  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.26/releases/cnpg-1.26.0.yaml
+  https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml
 kubectl wait --for=condition=Available deployment/cnpg-controller-manager -n cnpg-system --timeout=180s
 
-# 2b. Opérateur RabbitMQ Cluster (version v2.15.0)
+# 2c. Opérateur RabbitMQ Cluster (version v2.15.0)
 RABBITMQ_OPERATOR_VERSION="v2.15.0"
 kubectl apply -f \
   "https://github.com/rabbitmq/cluster-operator/releases/download/${RABBITMQ_OPERATOR_VERSION}/cluster-operator.yml"
@@ -59,7 +69,10 @@ kubectl wait --for=condition=Available deployment/rabbitmq-cluster-operator -n r
 
 # 3. Build + load des images dans Kind
 docker build -t task-manager-api:latest ./backend
-docker build -t task-manager-frontend:latest --target production ./frontend
+docker build -t task-manager-frontend:latest --target production \
+  --build-arg VITE_MAIL_UI_URL=http://mailpit.localhost \
+  --build-arg VITE_REDIS_INSIGHT_URL=http://redisinsight.localhost \
+  ./frontend
 kind load docker-image task-manager-api:latest task-manager-frontend:latest --name task-manager
 
 # 4. Namespace, secrets, BDD, dépendances
@@ -78,8 +91,11 @@ kubectl apply -f k8s/api-config.yaml
 kubectl apply -f k8s/api-deployment.yaml
 kubectl apply -f k8s/frontend-deployment.yaml
 kubectl apply -f k8s/worker-deployment.yaml
+kubectl apply -f k8s/hpa.yaml
+kubectl apply -f k8s/pdb.yaml
 kubectl apply -f k8s/ingress.yaml
 kubectl apply -f k8s/ingress-dev.yaml
+kubectl apply -f k8s/network-policies.yaml
 ```
 
 ## URLs
@@ -103,10 +119,10 @@ Les consoles de dev sont exposées via l'Ingress sur des hostnames dédiés :
 > ```
 
 > **Boutons de l'en-tête du frontend** — les raccourcis Mailpit / RedisInsight de
-> l'app pointent vers `localhost:8025` / `localhost:5540` (valeurs figées au build).
-> Pour qu'ils ciblent les URLs ci-dessus, rebuilder le frontend avec
-> `--build-arg VITE_MAIL_UI_URL=http://mailpit.localhost` et
-> `--build-arg VITE_REDIS_INSIGHT_URL=http://redisinsight.localhost`.
+> l'app sont figés **au build** du frontend. `deploy.sh` passe déjà les bons
+> `--build-arg` (`VITE_MAIL_UI_URL`, `VITE_REDIS_INSIGHT_URL`) : rien à faire.
+> En build manuel, reprendre la commande de l'étape 3 — sinon les boutons pointent
+> vers `localhost:8025` / `localhost:5540`.
 
 ## Sauvegarde / restauration de la base (pg_dump)
 

@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04. Les agrégats &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Un agrégat est une frontière de cohérence transactionnelle, pas un schéma de relations. Comment choisir la frontière, la racine, et pourquoi le DDD n'interdit pas les collections.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html" aria-current="page"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>04. Les agrégats</h1>
+  <p class="lede">Le concept le plus mal enseigné du DDD, généralement réduit à
+  une question de relations SQL. Prenons-le par le bon bout.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; Un agrégat n'est pas « un objet et ses enfants ».
+  C'est une <strong>frontière de cohérence transactionnelle</strong> : l'ensemble
+  de ce qui doit rester cohérent au sein d'une même transaction. Tout le reste
+  &mdash; racine, références, cardinalités &mdash; découle de cette définition.
+</div>
+
+<h2 id="la-définition-qui-compte">La définition qui compte<a class="anchor" href="#la-définition-qui-compte" aria-label="Lien vers cette section">#</a></h2>
+
+<blockquote>
+  <p>Un <strong>agrégat</strong> est un groupe d'objets traité comme une
+  <strong>unité de cohérence métier</strong>. Il a une <strong>racine</strong>
+  (<em>aggregate root</em>), seul point d'entrée des modifications, qui garantit
+  que l'ensemble reste valide. Ses invariants sont vérifiés <strong>dans une même
+  transaction</strong>.</p>
+</blockquote>
+
+<div class="warn">
+  <strong>Ce que cette définition ne dit pas</strong>
+  « Unité de cohérence » ne veut pas dire « on fait toujours un <code>SELECT</code>
+  de tous les champs, on hydrate tout, on réécrit tout ». L'agrégat définit la
+  <strong>frontière métier</strong> et le <strong>point d'entrée des
+  modifications</strong> ; la stratégie de persistance reste un choix séparé, qui
+  peut charger partiellement, écrire de façon incrémentale, ou s'appuyer sur un
+  verrou optimiste. Confondre les deux pousse mécaniquement vers de gros agrégats
+  très coûteux &mdash; exactement ce qu'on cherche à éviter.
+</div>
+
+<p>La question de conception n'est donc jamais « ces objets sont-ils liés ? »
+(presque tout est lié à presque tout) mais :</p>
+
+<blockquote>
+  <p><strong>Ces objets doivent-ils être cohérents dans la même transaction ?</strong></p>
+</blockquote>
+
+<h2 id="lexemple-canonique--order--orderline">L'exemple canonique : <code>Order</code> / <code>OrderLine</code><a class="anchor" href="#lexemple-canonique--order--orderline" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Cet exemple n'existe pas dans ce projet &mdash; le domaine « tâches » est trop
+simple pour le montrer &mdash; mais il est indispensable pour comprendre.</p>
+
+<div class="snippet" data-lang="python"><pre><code># Exemple illustratif, hors de ce dépôt
+class Order:                              # ← RACINE de l'agrégat
+    def __init__(self, id: OrderId, customer_id: CustomerId) -&gt; None:
+        self.id = id
+        self.customer_id = customer_id     # autre agrégat → par identité
+        self._lines: list[OrderLine] = []  # même agrégat → objets réels
+        self._status = OrderStatus.DRAFT
+
+    def add_line(self, product_id: ProductId, quantity: int, price: Money) -&gt; None:
+        if self._status is not OrderStatus.DRAFT:
+            raise OrderAlreadySubmitted()          # invariant d'agrégat
+        if self.total() + price * quantity &gt; MAX_ORDER_AMOUNT:
+            raise OrderAmountExceeded()            # invariant d'agrégat
+        self._lines.append(OrderLine(product_id, quantity, price))</code></pre></div>
+
+<p>Deux observations décisives.</p>
+
+<p><strong>1. <code>OrderLine</code> est bien <em>dans</em> l'agrégat, sous forme
+d'objets, pas d'IDs.</strong> Une ligne de commande n'a aucun sens sans sa
+commande, et le total de la commande doit rester cohérent avec ses lignes à tout
+instant. Elles partagent la même transaction, donc le même agrégat.</p>
+
+<div class="warn">
+  <strong>Le DDD n'interdit pas les collections d'objets</strong>
+  Il interdit de traverser les frontières <em>entre</em> agrégats par navigation
+  d'objets. À l'intérieur d'un agrégat, les objets se référencent naturellement.
+</div>
+
+<p><strong>2. Tout passe par la racine.</strong></p>
+
+<div class="snippet" data-lang="python"><pre><code>order.add_line(...)          # ✅ l'invariant est vérifié
+order._lines.append(...)     # ❌ la porte de service : plus aucune garantie</code></pre></div>
+
+<p>C'est la même idée qu'au
+<a href="./03-le-domaine.html#les-invariants-vivent-dans-lentité">chapitre 03</a>,
+élevée d'un cran : ce que l'entité fait pour son propre état, la racine le fait
+pour tout son agrégat.</p>
+
+<h2 id="comment-choisir-une-frontière">Comment choisir une frontière<a class="anchor" href="#comment-choisir-une-frontière" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Quatre questions, dans cet ordre :</p>
+
+<ol>
+  <li><strong>Y a-t-il un invariant qui traverse ces objets ?</strong> Si modifier
+      A doit immédiatement contraindre B (« le total de la commande ≤ 10 000 € »),
+      ils sont dans le même agrégat. Si les deux peuvent diverger un instant sans
+      que le métier hurle, ils n'y sont pas.</li>
+  <li><strong>Ces objets ont-ils le même cycle de vie ?</strong> Une
+      <code>OrderLine</code> naît et meurt avec sa commande. Une <code>Task</code>
+      survit très bien à… rien du tout, elle est indépendante d'un
+      <code>User</code> au sens où l'un peut être modifié sans l'autre.</li>
+  <li><strong>Quelle est la taille maximale plausible ?</strong> Un invariant ne
+      se vérifie que sur ce qu'on a sous la main : plus l'agrégat est gros, plus le
+      coût de le rendre cohérent grimpe. Un <code>User</code> contenant 50 000
+      <code>Task</code> est ingérable &mdash; c'est le signal le plus fiable qu'une
+      frontière est mal placée.</li>
+  <li><strong>Qui a besoin de verrouiller quoi ?</strong> Deux utilisateurs qui
+      modifient chacun une tâche différente du même propriétaire ne devraient pas
+      se bloquer mutuellement. Un gros agrégat, c'est de la contention.</li>
+</ol>
+
+<p>En cas de doute : <strong>préfère des agrégats petits.</strong> C'est le
+conseil le plus constant de la littérature DDD, et le plus facile à corriger dans
+le mauvais sens (fusionner deux petits agrégats est plus simple que découper un
+gros).</p>
+
+<h2 id="pourquoi-user-et-task-sont-deux-agrégats">Pourquoi <code>User</code> et <code>Task</code> sont deux agrégats<a class="anchor" href="#pourquoi-user-et-task-sont-deux-agrégats" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Applique la grille au projet :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Question</th><th><code>User</code> + <code>Task</code> ensemble ?</th></tr></thead>
+  <tbody>
+    <tr><td>Invariant traversant ?</td><td>Non. Aucune règle ne dit « l'état d'un user contraint l'état de ses tâches ».</td></tr>
+    <tr><td>Même cycle de vie ?</td><td>Non. Un user existe avant et après ses tâches.</td></tr>
+    <tr><td>Taille bornée ?</td><td>Non. Un user peut avoir des milliers de tâches.</td></tr>
+    <tr><td>Contention ?</td><td>Oui, si fusionnés : deux tâches du même user se bloqueraient.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Conclusion : <strong>deux agrégats.</strong> La raison de fond n'est pas « on
+référence par identité, c'est la règle » &mdash; c'est que <strong><code>User</code>
+et <code>Task</code> n'ont pas besoin d'être cohérents dans la même
+transaction.</strong> La référence par identité est la <em>conséquence</em> de
+cette frontière, pas sa cause.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 660 200" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Deux agrégats séparés : l'agrégat Task, dont la racine porte id, titre, statut et owner_id, référence l'agrégat User par identité seulement, au moyen d'un UserId.">
+  <defs>
+    <marker id="f4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <g fill="none" stroke="var(--line)" stroke-dasharray="4 4">
+      <rect x="10" y="40" width="270" height="112" rx="8"/>
+      <rect x="380" y="40" width="270" height="112" rx="8"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="10.5" letter-spacing="0.07em" text-anchor="middle">
+      <text x="145" y="32">AGRÉGAT TASK</text>
+      <text x="515" y="32">AGRÉGAT USER</text>
+    </g>
+
+    <rect x="30" y="66" width="230" height="66" rx="7" fill="var(--surface)" stroke="var(--accent)"/>
+    <rect x="400" y="66" width="230" height="66" rx="7" fill="var(--surface)" stroke="var(--accent)"/>
+
+    <g fill="var(--ink)" font-size="12.5" font-weight="600" text-anchor="middle">
+      <text x="145" y="92">Task <tspan fill="var(--muted)" font-weight="400">(racine)</tspan></text>
+      <text x="515" y="92">User <tspan fill="var(--muted)" font-weight="400">(racine)</tspan></text>
+    </g>
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="145" y="112">id &#183; title &#183; status</text>
+      <text x="145" y="126">owner_id</text>
+      <text x="515" y="112">id &#183; name &#183; email</text>
+    </g>
+
+    <line x1="264" y1="99" x2="396" y2="99" stroke="var(--muted)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#f4)"/>
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="330" y="178">owner_id : UserId</text>
+      <text x="330" y="192">référence par identité</text>
+    </g>
+    <line x1="330" y1="103" x2="330" y2="164" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 3"/>
+  </g>
+</svg>
+</figure>
+
+<p>C'est aussi ce qui explique pourquoi <code>User</code> <strong>ne porte
+pas</strong> de collection <code>tasks</code> &mdash; et pourquoi
+<code>Order</code> <strong>porte</strong> ses <code>lines</code>. Même principe,
+deux réponses, parce que les frontières de cohérence diffèrent.</p>
+
+<h2 id="une-transaction-un-agrégat--vraiment-">Une transaction, un agrégat — vraiment ?<a class="anchor" href="#une-transaction-un-agrégat--vraiment-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Une recommandation fréquente en DDD est de concevoir les cas d'usage pour ne
+modifier <strong>qu'un seul agrégat à la fois</strong>. Ce n'est pas une règle
+officielle gravée quelque part : c'est un conseil de conception destiné à
+préserver les frontières de cohérence. Il a une raison forte : si tu peux modifier
+deux agrégats atomiquement aujourd'hui, ta frontière n'était peut-être pas
+nécessaire &mdash; et surtout, cette habitude ne survit pas au jour où les deux
+agrégats vivent dans deux services ou deux bases.</p>
+
+<p>En pratique, dans un monolithe sur une base unique, modifier deux agrégats dans
+une transaction est courant, techniquement sans risque, et souvent le bon
+compromis. Ce projet l'autorise d'ailleurs : la frontière transactionnelle entoure
+le use case, pas l'agrégat
+(<a href="./08-transactions-et-erreurs.html">ch. 08</a>).</p>
+
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
+  <tbody>
+    <tr><td>Portée transactionnelle</td><td>1 transaction = 1 agrégat (idéal, prépare la distribution)</td><td>1 transaction = 1 use case (pragmatique, base unique)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Sache que tu déroges, et pourquoi : le jour où le contexte <code>user</code>
+part dans un autre service, ce sont ces endroits-là qu'il faudra reprendre (avec
+des événements, une cohérence à terme, ou un pattern outbox).</p>
+
+<h2 id="lanti-pattern--lagrégat-gigantesque">L'anti-pattern : l'agrégat gigantesque<a class="anchor" href="#lanti-pattern--lagrégat-gigantesque" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le symptôme est facile à reconnaître :</p>
+
+<div class="snippet" data-lang="python"><pre><code>class User:                     # ❌
+    def __init__(self, ...):
+        self.tasks: list[Task] = []
+        self.notifications: list[Notification] = []
+        self.audit_log: list[AuditEntry] = []</code></pre></div>
+
+<p>Conséquences : chaque lecture d'un user tire des milliers de lignes ; chaque
+écriture verrouille tout ; les règles des quatre concepts se mélangent dans une
+seule classe ; et les tests deviennent des monstres de mise en place. On appelle
+parfois ça le <em>big ball of aggregate</em>.</p>
+
+<p>Le réflexe correctif : demande-toi quel <strong>invariant</strong> justifierait
+cette collection. S'il n'y en a pas &mdash; et il n'y en a presque jamais &mdash;
+c'est une <strong>requête</strong> qui est déguisée en attribut
+(<a href="./05-relations-entre-agregats.html">ch. 05</a>).</p>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Un agrégat est une <strong>frontière de cohérence transactionnelle</strong>,
+      pas un schéma de relations.</li>
+  <li>La question de conception : <em>ces objets doivent-ils être cohérents dans
+      la même transaction ?</em></li>
+  <li>La <strong>racine</strong> est la seule porte d'entrée ; elle garantit les
+      invariants de tout l'agrégat.</li>
+  <li><strong>À l'intérieur</strong> d'un agrégat, les collections d'objets sont
+      normales. <strong>Entre</strong> agrégats, on passe par l'identité.</li>
+  <li>En cas de doute : agrégats <strong>petits</strong>. Le signal d'alarme est
+      la taille non bornée.</li>
+  <li>« Un agrégat par transaction » est un idéal qui prépare la distribution ; y
+      déroger dans un monolithe est un choix, pas une faute &mdash; à condition de
+      le savoir.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>Un <code>Article</code> de blog et ses <code>Comment</code>. Même agrégat
+        ou deux agrégats ? <strong>a.</strong> passe les quatre questions de
+        conception ; <strong>b.</strong> donne le critère décisif ;
+        <strong>c.</strong> décris une variante du besoin qui inverserait ta
+        réponse ; <strong>d.</strong> quel compromis acceptes-tu dans le cas que
+        tu as retenu ?</li>
+    <li>Une <code>Order</code> et son <code>Payment</code>. Même exercice &mdash;
+        et remarque ce qui change si le paiement est traité par un prestataire
+        externe et peut arriver 3 jours plus tard.</li>
+    <li>Dans ce projet, quel invariant faudrait-il inventer pour qu'il devienne
+        <em>légitime</em> de faire de <code>User</code> et <code>Task</code> un
+        seul agrégat ? Est-il crédible ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-04">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./03-le-domaine.html">&larr; 03. Le domaine</a>
+  <a href="./05-relations-entre-agregats.html">05. Relations entre agrégats &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

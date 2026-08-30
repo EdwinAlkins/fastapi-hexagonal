@@ -18,6 +18,7 @@ from task_manager.presentation.api.dependencies.repositories import (
 )
 from task_manager.presentation.api.dependencies.session import SessionDep, get_session
 from task_manager.presentation.api.dependencies.task import (
+    TaskQueryDep,
     get_complete_task,
     get_create_task,
     get_delete_task,
@@ -54,6 +55,7 @@ __all__ = [
     "get_rename_task",
     "get_delete_task",
     "get_share_task",
+    "TaskQueryDep",
     # Contexte user
     "get_create_user",
     "get_get_user",

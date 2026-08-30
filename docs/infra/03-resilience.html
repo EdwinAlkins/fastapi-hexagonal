@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03. Résilience &mdash; Infrastructure &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Anti-affinité requise ou préférée, HPA sur CPU et mémoire, PodDisruptionBudget — et ce qui se passe réellement quand on draine un nœud.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html">Cours</a>
+    <a href="../infra/index.html" aria-current="true">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Sections de l'infrastructure">
+  <h2>Infrastructure</h2>
+  <ul>
+    <li><a href="./index.html">Vue d'ensemble</a></li>
+    <li><a href="./00-compose.html"><span class="num">00</span>Docker Compose</a></li>
+    <li><a href="./01-donnees.html"><span class="num">01</span>Les données</a></li>
+    <li><a href="./02-workloads.html"><span class="num">02</span>Les workloads</a></li>
+    <li><a href="./03-resilience.html" aria-current="page"><span class="num">03</span>Résilience</a></li>
+    <li><a href="./04-reseau.html"><span class="num">04</span>Réseau</a></li>
+    <li><a href="./05-exploitation.html"><span class="num">05</span>Exploitation</a></li>
+  </ul>
+  <h2>Voir aussi</h2>
+  <ul>
+    <li><a href="../cours/index.html">Le cours</a></li>
+    <li><a href="../cours/11-cache-et-evenements.html">Cache &amp; événements</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>03. Résilience</h1>
+  <p class="lede">Trois mécanismes indépendants, trois questions différentes
+  &mdash; et un scénario de drain qui révèle une conséquence non évidente.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; L'<strong>anti-affinité</strong> décide
+  <em>où</em>, le <strong>HPA</strong> décide <em>combien</em>, le
+  <strong>PDB</strong> décide <em>combien on peut retirer d'un coup</em>. Ils ne se
+  remplacent pas. Et avec une anti-affinité requise sur 3 nœuds, drainer un worker
+  laisse une instance PostgreSQL en <code>Pending</code> &mdash; c'est attendu.
+</div>
+
+<h2 id="trois-mécanismes-trois-questions">Trois mécanismes, trois questions<a class="anchor" href="#trois-mécanismes-trois-questions" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Mécanisme</th><th>Question</th><th>Agit</th><th>Protège de</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Anti-affinité</strong></td><td>Où placer les pods ?</td><td>au scheduling</td><td>la perte d'un nœud</td></tr>
+    <tr><td><strong>HPA</strong></td><td>Combien de pods ?</td><td>en continu</td><td>la montée de charge</td></tr>
+    <tr><td><strong>PodDisruptionBudget</strong></td><td>Combien peut-on en retirer ?</td><td>aux évictions <em>volontaires</em></td><td>nos propres opérations</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>La confusion la plus fréquente porte sur le dernier : <strong>un PDB ne protège
+pas d'un crash</strong>. Si un nœud brûle, les pods meurent, PDB ou pas. Il ne
+contraint que les perturbations <em>volontaires</em> &mdash; un
+<code>kubectl drain</code>, une mise à jour progressive, un
+<code>rollout restart</code>. C'est déjà énorme : ce sont celles qu'on déclenche
+soi-même, donc celles qu'on peut rendre sûres.</p>
+
+<h2 id="anti-affinité">Anti-affinité : requise pour les données, préférée pour le reste<a class="anchor" href="#anti-affinité" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Workload</th><th>Type</th><th>Effet si le placement est impossible</th></tr></thead>
+  <tbody>
+    <tr><td>PostgreSQL (CNPG ×3)</td><td><code>required</code></td><td>Le pod reste <code>Pending</code></td></tr>
+    <tr><td><code>api</code> ×2</td><td><code>preferred</code> (poids 100)</td><td>Le pod se schedule quand même, colocalisé</td></tr>
+    <tr><td><code>mail-worker</code> ×2</td><td><code>preferred</code></td><td>idem</td></tr>
+    <tr><td><code>frontend</code> ×2</td><td><code>preferred</code></td><td>idem</td></tr>
+    <tr><td>RabbitMQ ×3</td><td><code>preferred</code></td><td>idem</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Le critère est simple : <strong>ce qui porte l'état exige la répartition, ce qui
+est sans état la préfère</strong>. Un pod API colocalisé avec son jumeau reste un
+inconvénient ; deux instances PostgreSQL sur le même nœud, c'est la perte du quorum
+à la première panne.</p>
+
+<div class="note">
+  <strong>Un choix discutable, et discuté</strong>
+  RabbitMQ porte aussi de l'état (les files, persistées sur 1 Gi) mais utilise
+  <code>preferred</code>. C'est un compromis : sur un cluster de développement, un
+  cluster RabbitMQ bloqué en <code>Pending</code> gêne plus qu'il ne protège. Sur un
+  vrai cluster, <code>required</code> se défendrait &mdash; la question mérite
+  d'être reposée le jour où l'infrastructure sort du portable.
+</div>
+
+<h2 id="hpa">HPA : deux métriques, et le plus exigeant l'emporte<a class="anchor" href="#hpa" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/hpa.yaml
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target: { type: Utilization, averageUtilization: 70 }
+  - type: Resource
+    resource:
+      name: memory
+      target: { type: Utilization, averageUtilization: 80 }</code></pre></div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Cible</th><th>Min → Max</th><th>CPU</th><th>Mémoire</th></tr></thead>
+  <tbody>
+    <tr><td><code>api</code></td><td>2 → 6</td><td>70 %</td><td>80 %</td></tr>
+    <tr><td><code>frontend</code></td><td>2 → 4</td><td>70 %</td><td>80 %</td></tr>
+    <tr><td><code>mail-worker</code></td><td colspan="3">bloc présent mais <strong>commenté</strong> &mdash; voir plus bas</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Trois points à comprendre pour que ces chiffres veuillent dire quelque chose :</p>
+
+<ul>
+  <li><strong>Le pourcentage se calcule sur les <code>requests</code></strong>, pas
+      sur les <code>limits</code> ni sur la capacité du nœud. L'API demande 50m de
+      CPU : 70 % signifie 35m consommés en moyenne. Une request mal choisie donne un
+      autoscaling absurde &mdash; c'est le lien direct avec le
+      <a href="./02-workloads.html#sondes-et-ressources">chapitre 02</a>.</li>
+  <li><strong>Deux métriques, pas une condition ET.</strong> Le HPA calcule une
+      recommandation par métrique et <strong>retient la plus élevée</strong>. Un pic
+      mémoire seul suffit donc à déclencher la montée.</li>
+  <li><strong><code>minReplicas: 2</code>, jamais 1.</strong> Ce n'est pas une
+      question de charge mais de disponibilité : descendre à 1 rendrait le PDB
+      <code>minAvailable: 1</code> impossible à satisfaire, et bloquerait tout drain.
+      Les deux réglages se tiennent.</li>
+</ul>
+
+<div class="warn">
+  <strong>Sans Metrics Server, le HPA ne fait rien</strong>
+  Il reste sur <code>&lt;unknown&gt;</code> et n'ajuste jamais. Sur Kind, il faut en
+  plus le patcher avec <code>--kubelet-insecure-tls</code>, sinon il refuse les
+  certificats auto-signés des kubelets. <code>deploy.sh</code> fait les deux, en
+  vérifiant d'abord si le drapeau est déjà présent.
+</div>
+
+<h3 id="pourquoi-le-worker-nest-pas-autoscalé">Pourquoi le worker n'est pas autoscalé<a class="anchor" href="#pourquoi-le-worker-nest-pas-autoscalé" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Le bloc existe dans <code>hpa.yaml</code>, entièrement commenté. Le fichier ne
+dit pas pourquoi ; voici l'argument qui justifie de le laisser ainsi.</p>
+
+<p>Un consommateur de file passe l'essentiel de son temps <strong>à attendre</strong>
+&mdash; un message, une réponse SMTP. Son CPU reste bas même quand 10 000 messages
+s'accumulent : autoscaler dessus revient à mesurer la mauvaise chose. Le signal
+pertinent est la <strong>profondeur de la file</strong> ou l'âge du plus vieux
+message, que Kubernetes ne connaît pas nativement &mdash; il faut KEDA, ou un
+adaptateur de métriques externes.</p>
+
+<p>Laisser le bloc commenté plutôt que de le supprimer est un choix défendable :
+il documente une intention, et rend explicite le fait que <code>replicas: 2</code>
+est un dimensionnement manuel assumé. Deux consommateurs concurrents sur la même
+file, c'est déjà du parallélisme &mdash; simplement pas élastique.</p>
+
+<h2 id="pdb">PodDisruptionBudget : rendre nos propres opérations sûres<a class="anchor" href="#pdb" aria-label="Lien vers cette section">#</a></h2>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/pdb.yaml — un budget par workload applicatif
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: api }        # puis frontend, puis mail-worker</code></pre></div>
+
+<p>Avec 2 replicas et <code>minAvailable: 1</code>, Kubernetes accepte d'évincer
+<strong>un</strong> pod à la fois. Un <code>drain</code> qui voudrait en retirer
+deux attend. C'est ce qui transforme une mise à jour de nœud d'un « ça devrait
+passer » en une garantie.</p>
+
+<p>Les composants gérés par opérateurs (PostgreSQL, RabbitMQ) n'ont pas de PDB dans
+ce dépôt : leurs opérateurs pilotent eux-mêmes les évictions et les bascules.
+Superposer un PDB maison risquerait d'entrer en conflit avec leur logique de
+promotion.</p>
+
+<h2 id="scénario-de-drain">Ce qui se passe vraiment quand on draine un nœud<a class="anchor" href="#scénario-de-drain" aria-label="Lien vers cette section">#</a></h2>
+
+<figure class="diagram">
+<svg viewBox="0 0 720 280" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Trois états lors du drain de worker-2 : à l'état normal chaque worker porte une instance PostgreSQL ; pendant le drain, worker-2 est cordonné et ses pods sont évincés un à un selon le PodDisruptionBudget ; après, les pods sans état sont replanifiés sur les nœuds restants mais l'instance PostgreSQL reste en Pending faute de nœud libre.">
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <g fill="var(--muted)" font-size="11" font-weight="600" text-anchor="middle">
+      <text x="122" y="24">1. état normal</text>
+      <text x="360" y="24">2. kubectl drain worker-2</text>
+      <text x="598" y="24">3. après</text>
+    </g>
+
+    <g fill="none" stroke="var(--line)" stroke-dasharray="4 4">
+      <rect x="8" y="34" width="228" height="186" rx="8"/>
+      <rect x="246" y="34" width="228" height="186" rx="8"/>
+      <rect x="484" y="34" width="228" height="186" rx="8"/>
+    </g>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="22" y="48" width="200" height="50" rx="6"/>
+      <rect x="22" y="106" width="200" height="50" rx="6"/>
+      <rect x="22" y="164" width="200" height="46" rx="6"/>
+      <rect x="260" y="48" width="200" height="50" rx="6"/>
+      <rect x="260" y="164" width="200" height="46" rx="6"/>
+      <rect x="498" y="48" width="200" height="50" rx="6"/>
+      <rect x="498" y="164" width="200" height="46" rx="6"/>
+    </g>
+    <rect x="260" y="106" width="200" height="50" rx="6" fill="var(--surface)" stroke="var(--danger)"/>
+    <rect x="498" y="106" width="200" height="50" rx="6" fill="var(--surface)" stroke="var(--danger)" stroke-dasharray="4 3"/>
+
+    <g fill="var(--ink)" font-size="10.5" font-weight="600">
+      <text x="32" y="66">worker-1</text>
+      <text x="32" y="124">worker-2</text>
+      <text x="32" y="182">worker-3</text>
+      <text x="270" y="66">worker-1</text>
+      <text x="270" y="124">worker-2</text>
+      <text x="270" y="182">worker-3</text>
+      <text x="508" y="66">worker-1</text>
+      <text x="508" y="124">worker-2</text>
+      <text x="508" y="182">worker-3</text>
+    </g>
+
+    <g fill="var(--muted)" font-size="10">
+      <text x="32" y="84">postgres-1 &#183; api &#183; front</text>
+      <text x="32" y="142">postgres-2 &#183; api &#183; worker</text>
+      <text x="32" y="200">postgres-3 &#183; worker &#183; front</text>
+      <text x="270" y="84">postgres-1 &#183; api &#183; front</text>
+      <text x="270" y="200">postgres-3 &#183; worker &#183; front</text>
+      <text x="508" y="84">postgres-1 &#183; api &#183;&#183; front</text>
+      <text x="508" y="200">postgres-3 &#183; worker &#183; front &#183; api</text>
+    </g>
+    <text x="270" y="142" fill="var(--danger)" font-size="10">cordonné &#183; éviction 1 par 1 (PDB)</text>
+    <text x="508" y="142" fill="var(--danger)" font-size="10">vide &#183; non schedulable</text>
+
+    <text x="360" y="242" fill="var(--danger)" font-size="11" font-weight="600" text-anchor="middle">postgres-2 reste en Pending</text>
+    <text x="360" y="258" fill="var(--muted)" font-size="10.5" text-anchor="middle">anti-affinité requise + 3 nœuds : aucun emplacement libre pour la 3ᵉ instance</text>
+    <text x="360" y="273" fill="var(--muted)" font-size="10.5" text-anchor="middle">Les 2 autres instances suffisent au quorum ; l'application continue.</text>
+  </g>
+</svg>
+</figure>
+
+<p>Le déroulé, étape par étape :</p>
+
+<ol>
+  <li><strong>Le nœud est cordonné</strong> : plus aucun nouveau pod n'y est
+      planifié.</li>
+  <li><strong>Les pods sans état sont évincés un par un</strong>, dans le respect
+      des PDB. L'API passe momentanément à 1 replica servant, puis remonte à 2 dès
+      que le remplaçant est prêt sur un autre nœud.</li>
+  <li><strong>Si l'instance PostgreSQL évincée était le primaire</strong>, CNPG
+      promeut un réplica. Le Service <code>-rw</code> suit automatiquement ; le
+      pooler rétablit ses connexions, et <code>pool_pre_ping</code> évite que les
+      connexions périmées ne remontent une erreur à l'application
+      (<a href="./01-donnees.html#2-un-nom-dénoncé-unique">ch. 01</a>).</li>
+  <li><strong>L'instance évincée reste en <code>Pending</code>.</strong>
+      L'anti-affinité <code>required</code> exige un nœud sans instance PostgreSQL :
+      avec 3 workers dont un cordonné, il n'y en a plus. Elle reviendra au
+      <code>uncordon</code>.</li>
+</ol>
+
+<div class="note">
+  <strong>Ce point 4 n'est pas un bug</strong>
+  C'est le prix explicitement payé pour la garantie du chapitre 01 : une instance
+  par nœud, sans exception. Pendant le drain, le cluster tourne à 2 instances sur 3
+  &mdash; suffisant pour servir et pour basculer. La leçon générale : une contrainte
+  <code>required</code> se paie en <strong>capacité de manœuvre</strong>, et il faut
+  le savoir <em>avant</em> de lancer la commande, pas en lisant
+  <code>kubectl get pods</code>.
+</div>
+
+<h2 id="ce-qui-nest-pas-couvert">Ce qui n'est pas couvert<a class="anchor" href="#ce-qui-nest-pas-couvert" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>La redondance matérielle.</strong> Les nœuds sont des conteneurs sur
+      une seule machine : Kind reproduit les <em>comportements</em> de Kubernetes,
+      pas la tolérance à la panne d'un serveur.</li>
+  <li><strong>La sauvegarde continue.</strong> CNPG sait faire du PITR vers un
+      stockage objet ; ce dépôt s'en tient à des dumps logiques
+      (<a href="./05-exploitation.html">ch. 05</a>). On restaure à l'instant d'un
+      dump, pas à la seconde près.</li>
+  <li><strong>Les budgets de perturbation des opérateurs.</strong> PostgreSQL et
+      RabbitMQ s'en remettent à leur contrôleur.</li>
+  <li><strong>La reprise du worker après crash.</strong> Elle repose sur l'accusé de
+      réception RabbitMQ, pas sur Kubernetes : un message non acquitté est redélivré
+      (<a href="../cours/11-cache-et-evenements.html">cours ch. 11</a>).</li>
+</ul>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li>Trois mécanismes, trois questions : <strong>où</strong> (anti-affinité),
+      <strong>combien</strong> (HPA), <strong>combien on peut retirer</strong> (PDB).</li>
+  <li>Un <strong>PDB ne protège pas d'un crash</strong> : uniquement des
+      perturbations volontaires.</li>
+  <li>L'état exige <code>required</code>, le sans-état se contente de
+      <code>preferred</code>.</li>
+  <li>Le HPA calcule sur les <code>requests</code> et retient la métrique
+      <strong>la plus exigeante</strong> ; sans Metrics Server il ne fait rien.</li>
+  <li><code>minReplicas: 2</code> et <code>minAvailable: 1</code> se tiennent : à 1
+      replica, plus aucun drain n'est possible.</li>
+  <li>Une contrainte <code>required</code> se paie en <strong>capacité de
+      manœuvre</strong> &mdash; un drain laisse une instance en <code>Pending</code>,
+      et c'est attendu.</li>
+</ul>
+
+<nav class="pager">
+  <a href="./02-workloads.html">&larr; 02. Les workloads</a>
+  <a href="./04-reseau.html">04. Réseau &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Infrastructure FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05. Relations entre agrégats &mdash; FastAPI Hexagonal</title>
+<meta name="description" content="Entre agrégats : référence par identité. Dans un agrégat : collections normales. Cardinalités 1→n, 1↔1, n↔n, réification, et le piège du N+1 en async.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
+</head>
+<body>
+<a class="skip" href="#content">Aller au contenu</a>
+
+<div class="topbar">
+  <a class="brand" href="../index.html">FastAPI <span>Hexagonal</span></a>
+  <nav class="topnav" aria-label="Sections du site">
+    <a href="../cours/index.html" aria-current="true">Cours</a>
+    <a href="../infra/index.html">Infra</a>
+  </nav>
+  <a class="repo" href="https://github.com/EdwinAlkins/fastapi-hexagonal">Code source</a>
+</div>
+
+<div class="shell">
+<nav class="sidenav" aria-label="Chapitres du cours">
+  <h2>Comprendre</h2>
+  <ul>
+    <li><a href="./index.html">Introduction</a></li>
+    <li><a href="./00-le-probleme.html"><span class="num">00</span>Le problème</a></li>
+    <li><a href="./01-regle-de-dependance.html"><span class="num">01</span>La règle de dépendance</a></li>
+    <li><a href="./02-ou-vit-une-regle.html"><span class="num">02</span>Où vit une règle&nbsp;?</a></li>
+  </ul>
+  <h2>Le domaine</h2>
+  <ul>
+    <li><a href="./03-le-domaine.html"><span class="num">03</span>Le domaine</a></li>
+    <li><a href="./04-les-agregats.html"><span class="num">04</span>Les agrégats</a></li>
+    <li><a href="./05-relations-entre-agregats.html" aria-current="page"><span class="num">05</span>Relations</a></li>
+  </ul>
+  <h2>Construire</h2>
+  <ul>
+    <li><a href="./06-application-et-ports.html"><span class="num">06</span>Application &amp; ports</a></li>
+    <li><a href="./07-adaptateurs.html"><span class="num">07</span>Les adaptateurs</a></li>
+    <li><a href="./08-transactions-et-erreurs.html"><span class="num">08</span>Transactions &amp; erreurs</a></li>
+  </ul>
+  <h2>Lire, écrire, réagir</h2>
+  <ul>
+    <li><a href="./09-lectures-et-query-services.html"><span class="num">09</span>Lire sans le domaine</a></li>
+    <li><a href="./10-ecritures-en-masse.html"><span class="num">10</span>Écrire en masse</a></li>
+    <li><a href="./11-cache-et-evenements.html"><span class="num">11</span>Cache &amp; événements</a></li>
+  </ul>
+  <h2>Mettre en œuvre</h2>
+  <ul>
+    <li><a href="./12-organisation-et-tests.html"><span class="num">12</span>Organisation &amp; tests</a></li>
+    <li><a href="./13-demarrer-un-projet.html"><span class="num">13</span>Démarrer un projet</a></li>
+    <li><a href="./14-annexes.html"><span class="num">14</span>Annexes</a></li>
+    <li><a href="./ddd-strategique.html">DDD stratégique</a></li>
+  </ul>
+</nav>
+
+<main id="content">
+<header>
+  <h1>05. Relations entre agrégats</h1>
+  <p class="lede">Le chapitre précédent a posé les frontières. Celui-ci traite ce
+  qui les traverse.</p>
+</header>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; <strong>Entre</strong> agrégats : référence par
+  identité, et « les enfants d'un parent » devient une requête.
+  <strong>Dans</strong> un agrégat : les objets se référencent normalement. La
+  jointure SQL est un détail d'infrastructure ; en async, charge les relations
+  explicitement.
+</div>
+
+<h2 id="la-règle-et-sa-portée-exacte">La règle et sa portée exacte<a class="anchor" href="#la-règle-et-sa-portée-exacte" aria-label="Lien vers cette section">#</a></h2>
+
+<blockquote>
+  <p>Un agrégat en référence un autre <strong>par son identité</strong>, jamais
+  par l'objet.</p>
+</blockquote>
+
+<p>Formulée ainsi, elle est souvent mal comprise. La version complète :</p>
+
+<blockquote>
+  <p>On ne traverse pas les frontières <strong>entre</strong> agrégats par
+  navigation d'objets. <strong>À l'intérieur</strong> d'un agrégat, les objets se
+  référencent directement et forment des collections quand c'est naturel.</p>
+</blockquote>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/entities.py
+class Task:
+    def __init__(self, *, id: TaskId, owner_id: UserId, ...):
+        self.owner_id = owner_id     # ✅ une IDENTITÉ, pas un objet User</code></pre></div>
+
+<p>Et symétriquement, <code>User</code> ne porte pas la collection de ses tâches.</p>
+
+<p>Les trois raisons, par ordre d'importance :</p>
+
+<ol>
+  <li><strong>Frontière de cohérence.</strong> C'est la vraie raison
+      (<a href="./04-les-agregats.html">ch. 04</a>) : <code>User</code> et
+      <code>Task</code> n'ont pas à être cohérents dans la même transaction.</li>
+  <li><strong>Découplage.</strong> Le contexte <code>task</code> n'a besoin ni du
+      nom ni de l'e-mail du propriétaire pour appliquer ses règles &mdash;
+      seulement de savoir <em>à qui</em> la tâche appartient.</li>
+  <li><strong>Volume.</strong> Un user peut avoir 10 000 tâches. Une collection en
+      mémoire n'a aucun sens.</li>
+</ol>
+
+<h2 id="-les-tâches-dun-user--est-une-requête">« Les tâches d'un user » est une requête<a class="anchor" href="#-les-tâches-dun-user--est-une-requête" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Puisque <code>User</code> ne porte pas ses tâches, on les obtient par le port
+du contexte <code>task</code> :</p>
+
+<div class="snippet" data-lang="python"><pre><code># domain/task/repository.py
+async def list_by_owner(self, owner_id: UserId, *, limit=100, offset=0) -&gt; list[Task]: ...</code></pre></div>
+
+<p>La navigation « user → ses tâches » devient un <strong>appel explicite</strong>,
+avec sa pagination. C'est plus verbeux qu'un attribut, et c'est le but : le coût
+de la requête redevient visible dans le code qui la déclenche.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 700 250" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="À gauche, l'anti-pattern : un User qui pointe vers dix mille objets Task. À droite, la bonne forme : Task porte un owner_id de type UserId, et l'accès aux tâches d'un user passe par un appel paginé list_by_owner.">
+  <defs>
+    <marker id="f5a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <rect x="10" y="34" width="310" height="200" rx="8" fill="none" stroke="var(--danger)" stroke-dasharray="4 4"/>
+    <rect x="356" y="34" width="334" height="200" rx="8" fill="none" stroke="var(--accent)" stroke-dasharray="4 4"/>
+
+    <text x="165" y="26" fill="var(--danger)" font-size="11" font-weight="600" text-anchor="middle">✗ Navigation par objets</text>
+    <text x="523" y="26" fill="var(--accent)" font-size="11" font-weight="600" text-anchor="middle">✓ Référence par identité + requête</text>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <rect x="30" y="112" width="100" height="44" rx="7"/>
+      <rect x="200" y="62" width="104" height="34" rx="6"/>
+      <rect x="200" y="116" width="104" height="34" rx="6"/>
+      <rect x="200" y="170" width="104" height="34" rx="6"/>
+      <rect x="372" y="112" width="134" height="44" rx="7"/>
+      <rect x="576" y="112" width="100" height="44" rx="7"/>
+      <rect x="372" y="182" width="304" height="40" rx="7"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="12.5" font-weight="600" text-anchor="middle">
+      <text x="80" y="139">User</text>
+      <text x="252" y="84">Task</text>
+      <text x="252" y="138">Task</text>
+      <text x="439" y="139">Task.owner_id</text>
+      <text x="626" y="139">User</text>
+    </g>
+    <text x="252" y="192" fill="var(--muted)" font-size="11.5" text-anchor="middle">… &#215; 10 000</text>
+    <text x="524" y="207" fill="var(--muted)" font-size="10.5" text-anchor="middle"
+          font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">tasks.list_by_owner(user_id, limit=100)</text>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f5a)">
+      <line x1="132" y1="130" x2="196" y2="82"/>
+      <line x1="132" y1="134" x2="196" y2="134"/>
+      <line x1="132" y1="140" x2="196" y2="184"/>
+      <line x1="439" y1="180" x2="439" y2="160"/>
+    </g>
+
+    <line x1="508" y1="134" x2="572" y2="134" stroke="var(--muted)" stroke-width="1.5"
+          stroke-dasharray="5 4" marker-end="url(#f5a)"/>
+    <text x="540" y="126" fill="var(--muted)" font-size="10" text-anchor="middle">UserId</text>
+  </g>
+</svg>
+</figure>
+
+<h2 id="où-vit-la-vraie-jointure--dans-linfrastructure">Où vit la vraie jointure ? Dans l'infrastructure<a class="anchor" href="#où-vit-la-vraie-jointure--dans-linfrastructure" aria-label="Lien vers cette section">#</a></h2>
+
+<p>La relation relationnelle (clé étrangère, jointure SQL) est un <strong>détail
+d'infrastructure</strong>. Elle n'apparaît qu'au niveau ORM :</p>
+
+<div class="snippet" data-lang="python"><pre><code># infrastructure/persistence/task/models.py
+owner_id: Mapped[uuid.UUID] = mapped_column(
+    ForeignKey("users.id", ondelete="CASCADE"), index=True
+)</code></pre></div>
+
+<p>Le domaine ignore cette clé étrangère : il ne connaît qu'un <code>UserId</code>.
+L'index, lui, n'est pas décoratif &mdash; sans lui, <code>list_by_owner</code>
+fait un <em>seq scan</em> sur toute la table.</p>
+
+<h2 id="qui-vérifie-que-le-user-existe-">Qui vérifie que le user existe ?<a class="anchor" href="#qui-vérifie-que-le-user-existe-" aria-label="Lien vers cette section">#</a></h2>
+
+<p>La FK garantit l'intégrité <strong>en base</strong>, mais provoquerait une
+erreur technique illisible. On veut une erreur métier claire, donc le use case
+vérifie (<a href="./02-ou-vit-une-regle.html">ch. 02</a>) :</p>
+
+<div class="snippet" data-lang="python"><pre><code>if not await self._users.exists(owner_id):
+    raise UserNotFound(str(owner_id))</code></pre></div>
+
+<p>Comme pour l'unicité d'e-mail : le use case donne le <strong>message</strong>,
+la base donne la <strong>garantie</strong>.</p>
+
+<h2 id="le-piège-du-n1-côté-lecture">Le piège du N+1 (côté lecture)<a class="anchor" href="#le-piège-du-n1-côté-lecture" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Si tu charges un <code>User</code> <strong>avec</strong> ses tâches pour une vue
+de lecture, attention : en SQLAlchemy <strong>async</strong>, le chargement
+paresseux implicite est interdit. C'est une contrainte bienvenue &mdash; elle
+t'oblige à être explicite :</p>
+
+<div class="snippet" data-lang="python"><pre><code>select(UserModel).options(selectinload(UserModel.tasks))   # 1 requête (+1), pas N</code></pre></div>
+
+<p>Sans ça, afficher 100 users avec leurs tâches déclencherait 101 requêtes : le
+fameux <strong>N+1</strong>. Noter que cette <code>relationship</code> vit dans les
+<strong>modèles ORM</strong>, pas dans le domaine &mdash; c'est un outil de lecture
+de l'infrastructure, pas une navigation d'agrégats.</p>
+
+<h2 id="vue-jointe-en-lecture--query-service">Vue jointe en lecture ? Query service<a class="anchor" href="#vue-jointe-en-lecture--query-service" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Pour afficher « la tâche + le nom de son propriétaire », ne reconstruis pas
+deux agrégats. C'est une <strong>lecture</strong> : un service de requête dédié
+fait un <code>SELECT … JOIN</code> et retourne directement un DTO de lecture.
+Détaillé au
+<a href="./09-lectures-et-query-services.html#anatomie-dun-query-service">chapitre 09</a>.</p>
+
+<h2 id="les-autres-cardinalités">Les autres cardinalités<a class="anchor" href="#les-autres-cardinalités" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Le principe directeur ne change pas : <strong>entre agrégats, référence par
+identité ; la jointure est un détail d'infra.</strong> Seule la <em>forme</em> de
+la référence change. (Les exemples ci-dessous sont illustratifs ; ce dépôt
+n'implémente que le 1→n.)</p>
+
+<h3 id="n1--déjà-fait">n→1 : déjà fait<a class="anchor" href="#n1--déjà-fait" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Un <code>n→1</code> est un <code>1→n</code> vu de l'autre côté, et c'est
+exactement ce que le projet implémente : <code>Task.owner_id</code> est le côté
+« plusieurs ». Rien de nouveau.</p>
+
+<p>En pratique, quand deux agrégats sont en relation 1→n, c'est <strong>presque
+toujours</strong> l'enfant qui porte l'identité du parent. Pas par dogme, mais
+parce que la collection côté parent bute sur les trois raisons du début
+(cohérence, découplage, volume).</p>
+
+<div class="note">
+  <strong>La nuance qui compte</strong>
+  Si tu te dis « mais <code>Order</code> porte bien ses <code>lines</code> ! »,
+  relis le
+  <a href="./04-les-agregats.html#lexemple-canonique--order--orderline">chapitre 04</a> :
+  <code>OrderLine</code> est <em>dans</em> l'agrégat <code>Order</code>. Ce n'est
+  pas une relation entre agrégats, donc cette section ne s'y applique pas. La
+  question à trancher d'abord est toujours : <strong>une frontière ou deux ?</strong>
+</div>
+
+<h3 id="11--dabord-est-ce-vraiment-deux-agrégats-">1↔1 : d'abord, est-ce vraiment deux agrégats ?<a class="anchor" href="#11--dabord-est-ce-vraiment-deux-agrégats-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Face à un <code>1↔1</code>, la première question n'est pas « comment le
+mapper » mais « devrait-ce être <strong>un seul</strong> agrégat ? ».</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 660 420" role="img" xmlns="http://www.w3.org/2000/svg"
+     aria-label="Arbre de décision pour une relation un-à-un. Si B n'a pas de cycle de vie indépendant de A, B est un value object composé dans A. Sinon, si un invariant les lie dans la même transaction, ils forment un seul agrégat. Sinon, deux agrégats dont un seul côté porte l'identité de l'autre.">
+  <defs>
+    <marker id="f5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+
+    <rect x="110" y="14" width="200" height="40" rx="7" fill="var(--raised)" stroke="var(--line)"/>
+    <text x="210" y="39" fill="var(--ink)" font-size="12.5" font-weight="600" text-anchor="middle">Relation 1↔1 entre A et B</text>
+
+    <g fill="var(--surface)" stroke="var(--line)">
+      <polygon points="210,74 310,112 210,150 110,112"/>
+      <polygon points="210,212 310,250 210,288 110,250"/>
+    </g>
+
+    <g fill="var(--ink)" font-size="10.5" text-anchor="middle">
+      <text x="210" y="106">B a-t-il un cycle de vie</text>
+      <text x="210" y="120">indépendant de A&#160;?</text>
+      <text x="210" y="244">Un invariant les lie-t-il</text>
+      <text x="210" y="258">dans la même transaction&#160;?</text>
+    </g>
+
+    <g fill="var(--surface)" stroke="var(--accent)">
+      <rect x="396" y="84" width="250" height="56" rx="7"/>
+      <rect x="396" y="222" width="250" height="56" rx="7"/>
+      <rect x="110" y="338" width="340" height="60" rx="7"/>
+    </g>
+
+    <g fill="var(--accent)" font-size="12" font-weight="600" text-anchor="middle">
+      <text x="521" y="107">B est un value object</text>
+      <text x="521" y="245">Un seul agrégat</text>
+      <text x="280" y="362">Deux agrégats</text>
+    </g>
+    <g fill="var(--muted)" font-size="10.5" text-anchor="middle">
+      <text x="521" y="124">composé dans A &#183; pas de relation</text>
+      <text x="521" y="262">B interne à A</text>
+      <text x="280" y="379">un seul côté porte l'ID de l'autre</text>
+      <text x="280" y="393">FK UNIQUE en base</text>
+    </g>
+
+    <g stroke="var(--muted)" stroke-width="1.5" fill="none" marker-end="url(#f5b)">
+      <line x1="210" y1="54" x2="210" y2="72"/>
+      <line x1="310" y1="112" x2="392" y2="112"/>
+      <line x1="310" y1="250" x2="392" y2="250"/>
+      <line x1="210" y1="150" x2="210" y2="210"/>
+      <line x1="210" y1="288" x2="210" y2="336"/>
+    </g>
+
+    <g fill="var(--muted)" font-size="10.5" font-weight="600">
+      <text x="338" y="106">non</text>
+      <text x="338" y="244">oui</text>
+      <text x="220" y="184">oui</text>
+      <text x="220" y="316">non</text>
+    </g>
+  </g>
+</svg>
+</figure>
+
+<ul>
+  <li><strong><code>User</code> ↔ <code>Address</code></strong> → l'adresse est un
+      value object <em>dans</em> <code>User</code>. Pas de relation, de la
+      composition.</li>
+  <li><strong><code>User</code> ↔ <code>BillingAccount</code></strong> (gérés
+      séparément, cycles de vie distincts) → deux agrégats, <strong>un seul
+      côté</strong> porte l'identité de l'autre. On évite les références mutuelles
+      (A→B <em>et</em> B→A), qui recréent le couplage circulaire qu'on cherchait à
+      éviter.</li>
+</ul>
+
+<p>Par défaut, penche pour <strong>fusionner</strong>. Ne sépare que si tu as une
+vraie raison.</p>
+
+<h3 id="nn--deux-stratégies">n↔n : deux stratégies<a class="anchor" href="#nn--deux-stratégies" aria-label="Lien vers cette section">#</a></h3>
+
+<p><strong>1. Collection d'identités</strong>, si les ensembles sont petits et que
+la relation ne porte <strong>aucune donnée</strong> propre :</p>
+
+<div class="snippet" data-lang="python"><pre><code>class Article:
+    def __init__(self, ..., tag_ids: set[TagId]) -&gt; None:
+        self._tag_ids = tag_ids        # des IDENTITÉS, pas des objets Tag</code></pre></div>
+
+<p><strong>2. Réifier la relation en agrégat</strong> &mdash; dès que la relation
+<strong>porte ses propres attributs</strong>. <code>Student ↔ Course</code> avec
+une date d'inscription et une note n'est pas une association : c'est un concept
+métier que le langage ubiquitaire nomme probablement déjà.</p>
+
+<div class="snippet" data-lang="python"><pre><code>class Enrollment:                       # la relation DEVIENT un agrégat
+    student_id: StudentId
+    course_id: CourseId
+    enrolled_at: datetime
+    grade: Grade | None
+
+    def assign_grade(self, grade: Grade) -&gt; None:
+        if self.grade is not None:
+            raise GradeAlreadyAssigned()  # un invariant : c'est bien une entité</code></pre></div>
+
+<p><strong>Le déclencheur de la réification</strong> : dès que tu veux « stocker
+quelque chose sur la relation », ou qu'une règle porte sur la relation elle-même,
+ce n'est plus une relation &mdash; c'est un concept.</p>
+
+<div class="warn">
+  <strong>Le piège n↔n</strong>
+  Ne jamais modéliser ça comme deux collections d'objets qui se pointent
+  mutuellement (<code>user.roles</code> ↔ <code>role.users</code>). C'est ce qui
+  fait exploser le chargement et dissout les frontières d'agrégats. En base, un
+  n↔n devient une table de jointure &mdash; un détail d'infrastructure, comme
+  toujours.
+</div>
+
+<h3 id="récapitulatif-des-cardinalités">Récapitulatif des cardinalités<a class="anchor" href="#récapitulatif-des-cardinalités" aria-label="Lien vers cette section">#</a></h3>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Relation</th><th>Modélisation domaine</th><th>Infra</th></tr></thead>
+  <tbody>
+    <tr><td>Objets du <strong>même</strong> agrégat</td><td>collection d'objets réels via la racine</td><td>table enfant, cascade</td></tr>
+    <tr><td>1→n / n→1 (2 agrégats)</td><td>l'enfant porte <code>parent_id: ParentId</code></td><td>FK <strong>indexée</strong></td></tr>
+    <tr><td>1↔1 (2 agrégats)</td><td>un seul côté porte l'ID de l'autre</td><td>FK <code>UNIQUE</code></td></tr>
+    <tr><td>1↔1 (en fait 1)</td><td>value object composé dans l'agrégat</td><td>colonnes inline</td></tr>
+    <tr><td>n↔n (sans données)</td><td>collection d'<code>Id</code> d'un côté</td><td>table de jointure</td></tr>
+    <tr><td>n↔n (avec données)</td><td>agrégat de relation réifié (<code>Enrollment</code>)</td><td>table-entité</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="la-relation-couche-par-couche">La relation, couche par couche<a class="anchor" href="#la-relation-couche-par-couche" aria-label="Lien vers cette section">#</a></h2>
+
+<p>Pour le 1→n de ce projet :</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Couche</th><th>Comment la relation apparaît</th></tr></thead>
+  <tbody>
+    <tr><td>Domain</td><td>Par identité : <code>Task.owner_id: UserId</code>. Aucune collection dans <code>User</code>.</td></tr>
+    <tr><td>Application</td><td>Use cases dépendant de deux ports (vérification d'existence).</td></tr>
+    <tr><td>Infrastructure</td><td>La vraie jointure : <code>ForeignKey</code>, <code>relationship</code>, <code>selectinload</code>.</td></tr>
+    <tr><td>Presentation</td><td>Routes imbriquées <code>/users/{id}/tasks</code> ; le DTO expose <code>owner_id</code>.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
+
+<ul>
+  <li><strong>Entre</strong> agrégats : référence par identité. <strong>Dans</strong>
+      un agrégat : objets et collections, normalement.</li>
+  <li>La raison profonde est la <strong>frontière de cohérence</strong>, pas une
+      interdiction des collections.</li>
+  <li>« Les enfants d'un parent » = une <strong>requête</strong> paginée, pas un
+      attribut.</li>
+  <li><strong>1↔1</strong> : demande-toi d'abord si ce n'est pas un seul agrégat
+      (souvent un VO).</li>
+  <li><strong>n↔n</strong> : collection d'IDs si trivial ; <strong>réifie</strong>
+      dès que la relation porte des données ou une règle.</li>
+  <li>La jointure SQL est un détail d'infra ; en async, charge explicitement
+      (<code>selectinload</code>) pour éviter le N+1.</li>
+</ul>
+
+<div class="exercises">
+  <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
+  <ol>
+    <li>On veut afficher, sur la page d'un user, son nom et le nombre de ses
+        tâches terminées. Trois implémentations sont possibles :
+        <code>list_by_owner</code> puis compte en Python, une méthode
+        <code>count_completed_by_owner</code> sur le port, ou un query service.
+        Laquelle choisis-tu et sur quel critère ?</li>
+    <li>Un collègue ajoute <code>tasks: list[Task]</code> à <code>User</code>
+        « juste pour les tests ». Cite trois problèmes concrets que ça crée dans
+        <strong>ce</strong> projet.</li>
+    <li><code>Enrollment</code> porte <code>student_id</code> et
+        <code>course_id</code>. Pourquoi n'est-ce pas simplement un value object ?</li>
+  </ol>
+  <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-05">Corrigés</a></p>
+</div>
+
+<nav class="pager">
+  <a href="./04-les-agregats.html">&larr; 04. Les agrégats</a>
+  <a href="./06-application-et-ports.html">06. Application &amp; ports &rarr;</a>
+</nav>
+</main>
+</div>
+
+<footer class="site">
+  Cours FastAPI Hexagonal &mdash;
+  <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">EdwinAlkins/fastapi-hexagonal</a>
+</footer>
+</body>
+</html>

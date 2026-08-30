@@ -47,3 +47,17 @@ export interface ShareTaskPayload {
   subject: string
   body: string
 }
+
+/** Projection de lecture de l'export : plate, telle que la renvoie le query service. */
+export interface TaskWithOwner {
+  task_id: string
+  title: string
+  /** Transportée pour l'import, jamais affichée : voir le chapitre 10 du cours. */
+  description: string | null
+  status: TaskStatus
+  created_at: string
+  completed_at: string | null
+  owner_id: string
+  owner_name: string
+  owner_email: string
+}

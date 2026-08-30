@@ -5,13 +5,13 @@ Adaptateur de publication d'événements via RabbitMQ.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from types import TracebackType
-from typing import Any
 
 import aio_pika
 import orjson
 
-from task_manager.application.shared.messaging import EventPublisherPort
+from task_manager.application.shared.messaging import EventPublisherPort, IntegrationEvent
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,21 @@ class RabbitMQMessageAdapter(EventPublisherPort):
         )
         logger.info("Connecté à RabbitMQ")
 
-    async def publish(self, routing_key: str, payload: dict[str, Any]) -> None:
+    async def publish(self, event: IntegrationEvent) -> None:
+        """Sérialise l'événement en JSON et le route sur son ``name``.
+
+        C'est ici, et nulle part ailleurs, que le type d'événement devient une
+        *clé de routage* AMQP : la couche application ignore ce vocabulaire.
+        """
         if not self._channel:
             raise RuntimeError("RabbitMQ non connecté")
         exchange = await self._channel.get_exchange(self._exchange_name)
         message = aio_pika.Message(
-            body=orjson.dumps(payload),
+            body=orjson.dumps(asdict(event)),
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            content_type="application/json",
         )
-        await exchange.publish(message, routing_key=routing_key)
+        await exchange.publish(message, routing_key=event.name)
 
     async def close(self) -> None:
         if self._connection:
