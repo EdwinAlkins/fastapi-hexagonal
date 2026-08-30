@@ -4,12 +4,14 @@
 # autorisées ; tout le reste est implicitement refusé. Pas de default-deny
 # global (plus sûr avec les pods CNPG, sensibles à la réplication).
 #
-# Chaîne autorisée :  ingress-nginx → frontend → api → (pooler → postgres,
+# Chaîne autorisée :  gateway (envoy) → frontend → api → (pooler → postgres,
 #                     rabbitmq, valkey, mailpit).  Le frontend ne peut JAMAIS
 #                     parler directement à postgres/pooler.
 # (Politiques d'INGRESS uniquement → l'egress, dont le DNS, reste libre.)
 
-# --- Frontend : joignable seulement par l'Ingress Controller (port 8080) ---
+# --- Frontend : joignable seulement par le data plane de la Gateway (8080) ---
+#     Envoy Gateway provisionne ses pods Envoy dans `envoy-gateway-system`,
+#     pas dans le namespace de la Gateway — d'où le namespaceSelector. ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-frontend, namespace: task-manager }
@@ -18,7 +20,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
   - from:
-    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 8080 }
 ---
@@ -75,7 +77,7 @@ spec:
     - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
 ---
 # --- RabbitMQ (géré par l'opérateur, label app.kubernetes.io/name) :
-#     AMQP (5672) depuis api + worker ; UI (15672) depuis l'Ingress ; clustering
+#     AMQP (5672) depuis api + worker ; UI (15672) depuis la Gateway ; clustering
 #     inter-nœuds (epmd/dist) ; gestion par l'opérateur. ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -90,7 +92,7 @@ spec:
     ports:
     - { protocol: TCP, port: 5672 }
   - from:
-    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 15672 }
   # Clustering inter-nœuds RabbitMQ (epmd 4369, distribution 25672) — même label.
@@ -115,7 +117,7 @@ spec:
     ports:
     - { protocol: TCP, port: 6379 }
 ---
-# --- Mailpit : SMTP (1025) depuis api + worker ; UI (8025) depuis l'Ingress ---
+# --- Mailpit : SMTP (1025) depuis api + worker ; UI (8025) depuis la Gateway ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-mailpit, namespace: task-manager }
@@ -129,11 +131,11 @@ spec:
     ports:
     - { protocol: TCP, port: 1025 }
   - from:
-    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 8025 }
 ---
-# --- Prometheus : UI (9090) depuis l'Ingress ---
+# --- Prometheus : UI (9090) depuis la Gateway ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-prometheus, namespace: task-manager }
@@ -142,11 +144,11 @@ spec:
   policyTypes: [Ingress]
   ingress:
   - from:
-    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 9090 }
 ---
-# --- RedisInsight : UI (5540) depuis l'Ingress ---
+# --- RedisInsight : UI (5540) depuis la Gateway ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: { name: allow-redisinsight, namespace: task-manager }
@@ -155,6 +157,6 @@ spec:
   policyTypes: [Ingress]
   ingress:
   - from:
-    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: envoy-gateway-system } }
     ports:
     - { protocol: TCP, port: 5540 }

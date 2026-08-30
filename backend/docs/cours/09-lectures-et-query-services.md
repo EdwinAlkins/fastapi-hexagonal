@@ -118,11 +118,11 @@ raccourci. Une lecture qui sert à **décider d'une écriture** — charger une 
 pour la compléter — repasse par l'agrégat, parce que la décision, elle, engage
 bien les invariants.
 
-La règle qui reste, elle, est absolue :
+La règle qui reste, elle, est ferme :
 
-> **Une écriture repasse toujours par les agrégats.** Un query service est en
-> lecture seule, sans exception. Le jour où il écrit, les invariants ne valent
-> plus rien nulle part.
+> **Une écriture qui doit faire respecter des invariants passe par le modèle qui
+> les porte.** Un query service, lui, est en lecture seule, sans exception : le
+> jour où il écrit, les invariants ne valent plus rien nulle part.
 
 ## Anatomie d'un query service
 
@@ -242,7 +242,7 @@ lecture, et l'abstraire n'apporte parfois rien.
 
 | Concept | Ce que dit le principe | Ce que fait ce projet |
 |---------|------------------------|-----------------------|
-| Chemin de lecture | Peut court-circuiter les agrégats | Aujourd'hui : tout passe par les agrégats ([voir plus bas](#et-ce-projet-)) |
+| Chemin de lecture | Peut court-circuiter les agrégats | Agrégats pour les listes simples ; **query service** pour l'export joint ([voir plus bas](#et-ce-projet-)) |
 | Abstraction des lectures | Non prescrite | Port en `application/`, implémentation en `infrastructure/` (par cohérence) |
 
 ## Quand basculer ? Le tableau de décision
@@ -326,10 +326,11 @@ lisible.
 - Les agrégats protègent les **écritures**. En lecture, leur contrat coûte sans
   rien rapporter.
 - Sur un chemin de lecture, on **abandonne délibérément** entités, value objects,
-  invariants et frontières d'agrégats. Ce n'est pas une entorse : c'est le bon
+  invariants et séparation des agrégats. Ce n'est pas une entorse : c'est le bon
   usage.
-- La règle qui ne bouge pas : **une écriture repasse toujours par les agrégats**
-  — y compris quand il y en a cent mille ([chapitre 10](10-ecritures-en-masse.md)).
+- La règle qui ne bouge pas : **une écriture qui doit faire respecter des
+  invariants passe par le modèle qui les porte** — y compris quand il y en a cent
+  mille ([chapitre 10](10-ecritures-en-masse.md)).
 - Un **query service** fait le SQL exact et rend un **DTO plat**, borné, en
   lecture seule.
 - Le vrai danger du N+1 n'est pas la page lente, c'est la **charge base** qui

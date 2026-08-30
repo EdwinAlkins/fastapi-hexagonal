@@ -190,10 +190,13 @@ C'est le point que la plupart des présentations escamotent. Le relais peut mour
 **après** avoir publié et **avant** d'avoir marqué la ligne. Au redémarrage, il
 republie.
 
-> **L'outbox garantit l'*at-least-once*, jamais l'*exactly-once*.**
-> Elle transforme « le message peut être perdu ou fantôme » en « le message
-> arrivera, peut-être plusieurs fois ». C'est un progrès énorme — mais il rend
-> l'**idempotence du consommateur obligatoire**, pas optionnelle.
+> **À elle seule, l'outbox ne fournit pas d'*exactly-once* de bout en bout.**
+> Ce qu'elle donne, c'est une publication *at-least-once* : « le message peut être
+> perdu ou fantôme » devient « le message arrivera, peut-être plusieurs fois ».
+> C'est un progrès énorme — mais il rend l'**idempotence du consommateur
+> obligatoire**, pas optionnelle. Un effet *observable* équivalent à l'exactly-once
+> reste atteignable : déduplication, contrainte d'unicité, clé d'idempotence. C'est
+> le consommateur qui le construit — jamais le broker ni l'outbox à eux seuls.
 
 Autrement dit : adopter l'outbox sans rendre le consommateur idempotent, c'est
 échanger une perte silencieuse contre des doublons silencieux. On n'a pas résolu
@@ -442,8 +445,9 @@ inerte à la place de RabbitMQ — le reste du câblage reste authentique.
   être située quelque part, explicitement.
 - Les effets externes ne se rollback pas : c'est le **dual write problem**, et il
   n'a pas de solution par réordonnancement.
-- L'**outbox** rend l'intention de publier transactionnelle, mais garantit
-  l'*at-least-once* : elle rend l'**idempotence du consommateur obligatoire**.
+- L'**outbox** rend l'intention de publier transactionnelle, mais ne fournit
+  qu'une publication *at-least-once* : elle rend l'**idempotence du consommateur
+  obligatoire**.
 - L'idempotence est une propriété du **traitement**, pas du message : opération
   naturellement rejouable, sinon déduplication garantie par une contrainte en base.
 - Deux questions décident du besoin : que coûte une **perte** ? que coûte un

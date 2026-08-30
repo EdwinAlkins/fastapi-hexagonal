@@ -86,7 +86,7 @@ découvre en production quand il n'a pas été rendu explicite.</p>
 
 <figure class="diagram">
 <svg viewBox="0 0 720 300" role="img" xmlns="http://www.w3.org/2000/svg"
-     aria-label="Le cluster Kind compte quatre nœuds : un control-plane qui porte l'Ingress Controller et le mapping des ports 80 et 443 vers l'hôte, et trois workers. L'anti-affinité requise place une instance PostgreSQL sur chacun des trois workers ; les autres charges y sont réparties.">
+     aria-label="Le cluster Kind compte quatre nœuds : un control-plane qui mappe les ports 80 et 443 de l'hôte sur les NodePort 30080 et 30443 de la Gateway, et trois workers. L'anti-affinité requise place une instance PostgreSQL sur chacun des trois workers ; les autres charges y sont réparties.">
   <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
     <text x="360" y="22" fill="var(--muted)" font-size="11" letter-spacing="0.06em" text-anchor="middle">CLUSTER KIND &#171; TASK-MANAGER &#187;</text>
 
@@ -103,12 +103,11 @@ découvre en production quand il n'a pas été rendu explicite.</p>
       <text x="446" y="62">worker-2</text>
       <text x="624" y="62">worker-3</text>
     </g>
-    <text x="90" y="78" fill="var(--muted)" font-size="10" text-anchor="middle">ingress-ready=true</text>
 
     <rect x="22" y="92" width="137" height="30" rx="6" fill="var(--raised)" stroke="var(--line)"/>
-    <text x="90" y="112" fill="var(--ink)" font-size="11" text-anchor="middle">ingress-nginx</text>
-    <text x="90" y="140" fill="var(--muted)" font-size="10" text-anchor="middle">ports 80 / 443</text>
-    <text x="90" y="154" fill="var(--muted)" font-size="10" text-anchor="middle">mappés vers l'hôte</text>
+    <text x="90" y="112" fill="var(--ink)" font-size="11" text-anchor="middle">entrée NodePort</text>
+    <text x="90" y="140" fill="var(--muted)" font-size="10" text-anchor="middle">80 &#8594; 30080</text>
+    <text x="90" y="154" fill="var(--muted)" font-size="10" text-anchor="middle">443 &#8594; 30443</text>
 
     <g fill="var(--raised)" stroke="var(--accent)">
       <rect x="200" y="92" width="137" height="30" rx="6"/>
@@ -175,9 +174,9 @@ découvre en production quand il n'a pas été rendu explicite.</p>
     <tr><td><code>migrate</code></td><td><code>Job</code> <code>db-migrate</code></td><td>Barrière avant l'API et le worker</td></tr>
     <tr><td><code>api</code></td><td><code>Deployment</code> ×2 + HPA 2→6</td><td>Montée en charge automatique</td></tr>
     <tr><td><code>worker</code></td><td><code>Deployment</code> <code>mail-worker</code> ×2</td><td>Consommateurs concurrents sur la file</td></tr>
-    <tr><td><code>frontend</code></td><td><code>Deployment</code> ×2 + HPA 2→4</td><td>Derrière l'Ingress</td></tr>
+    <tr><td><code>frontend</code></td><td><code>Deployment</code> ×2 + HPA 2→4</td><td>Derrière la Gateway</td></tr>
     <tr><td><code>mailpit</code>, <code>prometheus</code>, <code>redisinsight</code></td><td><code>Deployment</code> ×1</td><td>Exposés par hostnames <code>*.localhost</code></td></tr>
-    <tr><td>ports publiés</td><td><code>Ingress</code> nginx</td><td>Un seul point d'entrée, sur le control-plane</td></tr>
+    <tr><td>ports publiés</td><td><code>Gateway</code> + <code>HTTPRoute</code> (Gateway API)</td><td>Un seul point d'entrée, exposé en NodePort (<a href="./04-reseau.html#la-gateway">ch. 04</a>)</td></tr>
   </tbody>
 </table>
 </div>
@@ -194,7 +193,7 @@ plutôt que sous un script maison.</p>
   <li><a href="./01-donnees.html"><span class="num">01</span><span class="title">Les données</span><span class="hook">CloudNativePG, le pooler, et pourquoi les migrations le contournent</span></a></li>
   <li><a href="./02-workloads.html"><span class="num">02</span><span class="title">Les workloads</span><span class="hook">Durcissement des pods, configuration, sondes, la même image pour trois rôles</span></a></li>
   <li><a href="./03-resilience.html"><span class="num">03</span><span class="title">Résilience</span><span class="hook">Anti-affinité, HPA, PodDisruptionBudget, ce que fait un drain</span></a></li>
-  <li><a href="./04-reseau.html"><span class="num">04</span><span class="title">Réseau</span><span class="hook">Neuf NetworkPolicy, l'Ingress, et les consoles de dev</span></a></li>
+  <li><a href="./04-reseau.html"><span class="num">04</span><span class="title">Réseau</span><span class="hook">Neuf NetworkPolicy, la Gateway API, et les consoles de dev</span></a></li>
   <li><a href="./05-exploitation.html"><span class="num">05</span><span class="title">Exploitation</span><span class="hook">Le script de déploiement, les sauvegardes, le nettoyage</span></a></li>
 </ul>
 
@@ -208,7 +207,8 @@ plutôt que sous un script maison.</p>
   <tbody>
     <tr><td>CloudNativePG</td><td><code>1.30.0</code></td><td><code>kubectl apply --server-side</code></td></tr>
     <tr><td>Opérateur RabbitMQ Cluster</td><td><code>v2.15.0</code></td><td>manifeste de release</td></tr>
-    <tr><td>ingress-nginx</td><td>provider <code>kind</code>, branche <code>main</code></td><td>manifeste amont</td></tr>
+    <tr><td>Gateway API (CRD)</td><td><code>v1.6.1</code>, embarquées par Envoy Gateway</td><td>&mdash;</td></tr>
+    <tr><td>Envoy Gateway</td><td><code>v1.9.1</code></td><td><code>kubectl apply --server-side</code></td></tr>
     <tr><td>Metrics Server</td><td><code>latest</code> + patch <code>--kubelet-insecure-tls</code></td><td>requis par le HPA</td></tr>
     <tr><td>PostgreSQL</td><td>image par défaut de CNPG 1.30</td><td>&mdash;</td></tr>
     <tr><td>Valkey</td><td><code>valkey/valkey:8-alpine</code></td><td>StatefulSet</td></tr>
@@ -217,13 +217,17 @@ plutôt que sous un script maison.</p>
 </table>
 </div>
 
-<div class="note">
-  <strong>Le patch qui n'est pas décoratif</strong>
-  Le Metrics Server est installé <em>puis patché</em> avec
+<div class="warn">
+  <strong>Patch spécifique à Kind &mdash; à ne jamais transposer</strong>
+  <p>Le Metrics Server est installé <em>puis patché</em> avec
   <code>--kubelet-insecure-tls</code>. Sans ce drapeau, il refuse les certificats
   auto-signés des kubelets de Kind, ne remonte aucune métrique &mdash; et le HPA
   reste bloqué sur <code>&lt;unknown&gt;</code> sans jamais dire pourquoi. C'est le
-  genre de détail qui coûte une soirée quand il n'est écrit nulle part.
+  genre de détail qui coûte une soirée quand il n'est écrit nulle part.</p>
+  <p>Il faut dire aussi ce qu'il fait : il <strong>désactive la vérification du
+  certificat des kubelets</strong>. Le Metrics Server le documente comme
+  <em>for testing purposes only</em>. Sur un vrai cluster, la voie propre est une CA
+  qui signe les certificats kubelet &mdash; ce contournement n'a sa place qu'ici.</p>
 </div>
 
 <nav class="pager">

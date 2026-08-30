@@ -1,0 +1,95 @@
+# Les routes attachées à la Gateway `task-manager` (gateway.yaml).
+#
+# Différence structurante avec l'Ingress : `hostnames` est au niveau de la
+# ROUTE, pas de la règle. Un Ingress rassemblait quatre hostnames dans un seul
+# objet ; ici il faut une HTTPRoute par hostname. C'est plus verbeux, et c'est
+# le but : chaque route peut vivre dans son namespace, appartenir à une équipe
+# différente et être supprimée sans toucher aux autres.
+#
+# Précédence : une route sans `hostnames` matche tout. Les routes des consoles,
+# qui déclarent un hostname exact, l'emportent sur la route applicative —
+# exactement comme les règles `host:` l'emportaient dans un Ingress.
+---
+# L'application : tout le trafic non nommé va au frontend Nginx, qui sert la SPA
+# et proxifie /api/ vers l'API. Pas de réécriture de chemin : le préfixe
+# /api/v1 attendu par FastAPI est préservé de bout en bout.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app
+  namespace: task-manager
+spec:
+  parentRefs:
+  - name: task-manager
+    sectionName: http
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - name: frontend
+      port: 80
+---
+# Consoles de dev — une route par hostname.
+# Ces noms doivent résoudre vers 127.0.0.1 :
+#   - avec systemd-resolved, *.localhost est déjà résolu en loopback ;
+#   - sinon, ajouter dans /etc/hosts :
+#       127.0.0.1  mailpit.localhost rabbitmq.localhost redisinsight.localhost prometheus.localhost
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mailpit
+  namespace: task-manager
+spec:
+  parentRefs:
+  - name: task-manager
+    sectionName: http
+  hostnames: ["mailpit.localhost"]
+  rules:
+  - backendRefs:
+    - name: mailpit
+      port: 8025
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rabbitmq
+  namespace: task-manager
+spec:
+  parentRefs:
+  - name: task-manager
+    sectionName: http
+  hostnames: ["rabbitmq.localhost"]
+  rules:
+  - backendRefs:
+    - name: rabbitmq
+      port: 15672
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: redisinsight
+  namespace: task-manager
+spec:
+  parentRefs:
+  - name: task-manager
+    sectionName: http
+  hostnames: ["redisinsight.localhost"]
+  rules:
+  - backendRefs:
+    - name: redisinsight
+      port: 5540
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: task-manager
+spec:
+  parentRefs:
+  - name: task-manager
+    sectionName: http
+  hostnames: ["prometheus.localhost"]
+  rules:
+  - backendRefs:
+    - name: prometheus
+      port: 9090

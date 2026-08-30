@@ -62,17 +62,28 @@
   <tbody>
     <tr><td><strong>Anti-affinité</strong></td><td>Où placer les pods ?</td><td>au scheduling</td><td>la perte d'un nœud</td></tr>
     <tr><td><strong>HPA</strong></td><td>Combien de pods ?</td><td>en continu</td><td>la montée de charge</td></tr>
-    <tr><td><strong>PodDisruptionBudget</strong></td><td>Combien peut-on en retirer ?</td><td>aux évictions <em>volontaires</em></td><td>nos propres opérations</td></tr>
+    <tr><td><strong>PodDisruptionBudget</strong></td><td>Combien peut-on en retirer ?</td><td>aux évictions via l'API Eviction</td><td>nos propres opérations</td></tr>
   </tbody>
 </table>
 </div>
 
 <p>La confusion la plus fréquente porte sur le dernier : <strong>un PDB ne protège
 pas d'un crash</strong>. Si un nœud brûle, les pods meurent, PDB ou pas. Il ne
-contraint que les perturbations <em>volontaires</em> &mdash; un
-<code>kubectl drain</code>, une mise à jour progressive, un
-<code>rollout restart</code>. C'est déjà énorme : ce sont celles qu'on déclenche
+contraint que les évictions qui passent par l'<strong>API Eviction</strong>
+&mdash; un <code>kubectl drain</code>, un vidage de nœud déclenché par
+l'autoscaler. C'est déjà énorme : ce sont les perturbations qu'on déclenche
 soi-même, donc celles qu'on peut rendre sûres.</p>
+
+<div class="warn">
+  <strong>Un PDB ne protège pas un rolling update</strong>
+  <p>C'est l'erreur qui suit immédiatement. Un rolling update de Deployment et un
+  <code>kubectl rollout restart</code> sont pilotés par le contrôleur du Deployment
+  &mdash; <code>maxUnavailable</code>, <code>maxSurge</code>, sondes de readiness
+  &mdash; et <strong>ne consultent pas le PDB</strong>. Une suppression directe de
+  pod ou de Deployment le contourne également. Deux mécanismes distincts, deux
+  réglages distincts : « j'ai un PDB, donc mon déploiement est protégé » est
+  faux.</p>
+</div>
 
 <h2 id="anti-affinité">Anti-affinité : requise pour les données, préférée pour le reste<a class="anchor" href="#anti-affinité" aria-label="Lien vers cette section">#</a></h2>
 
@@ -101,6 +112,21 @@ inconvénient ; deux instances PostgreSQL sur le même nœud, c'est la perte du 
   cluster RabbitMQ bloqué en <code>Pending</code> gêne plus qu'il ne protège. Sur un
   vrai cluster, <code>required</code> se défendrait &mdash; la question mérite
   d'être reposée le jour où l'infrastructure sort du portable.
+</div>
+
+<div class="warn">
+  <strong>Un cluster RabbitMQ n'est pas une réplication des messages</strong>
+  <p>La formule « 3 nœuds » induit en erreur. Les nœuds répliquent les
+  <em>métadonnées</em> du cluster ; le contenu d'une <strong>queue classique</strong>
+  vit sur un seul nœud, et RabbitMQ 4 a supprimé le mécanisme historique des
+  <em>mirrored classic queues</em>. Ici, rien ne demande autre chose : perdre un nœud,
+  c'est perdre les messages qu'il portait.</p>
+  <p>Une queue réellement répliquée est une <strong>quorum queue</strong>, et son
+  type se déclare <strong>à la création</strong> &mdash; pas dans le manifeste du
+  cluster. Sur trois nœuds, elle tolère la perte d'un membre. Et elle ne suffit pas
+  seule : c'est la chaîne <em>quorum queue + publisher confirms + acquittements du
+  consommateur</em> qui rend la messagerie résiliente. Ce dépôt n'en a que le premier
+  maillon d'infrastructure, et aucun des trois réglages.</p>
 </div>
 
 <h2 id="hpa">HPA : deux métriques, et le plus exigeant l'emporte<a class="anchor" href="#hpa" aria-label="Lien vers cette section">#</a></h2>
@@ -153,7 +179,10 @@ spec:
   Il reste sur <code>&lt;unknown&gt;</code> et n'ajuste jamais. Sur Kind, il faut en
   plus le patcher avec <code>--kubelet-insecure-tls</code>, sinon il refuse les
   certificats auto-signés des kubelets. <code>deploy.sh</code> fait les deux, en
-  vérifiant d'abord si le drapeau est déjà présent.
+  vérifiant d'abord si le drapeau est déjà présent &mdash; en sachant que ce drapeau
+  <strong>désactive la vérification du certificat kubelet</strong> et ne se transpose
+  pas hors d'un cluster local (<a href="./index.html#versions-épinglées">voir
+  l'encadré du sommaire</a>).
 </div>
 
 <h3 id="pourquoi-le-worker-nest-pas-autoscalé">Pourquoi le worker n'est pas autoscalé<a class="anchor" href="#pourquoi-le-worker-nest-pas-autoscalé" aria-label="Lien vers cette section">#</a></h3>
@@ -261,10 +290,14 @@ promotion.</p>
       des PDB. L'API passe momentanément à 1 replica servant, puis remonte à 2 dès
       que le remplaçant est prêt sur un autre nœud.</li>
   <li><strong>Si l'instance PostgreSQL évincée était le primaire</strong>, CNPG
-      promeut un réplica. Le Service <code>-rw</code> suit automatiquement ; le
-      pooler rétablit ses connexions, et <code>pool_pre_ping</code> évite que les
-      connexions périmées ne remontent une erreur à l'application
-      (<a href="./01-donnees.html#2-un-nom-dénoncé-unique">ch. 01</a>).</li>
+      promeut un réplica. Le Service <code>-rw</code> suit automatiquement et le
+      pooler rétablit ses connexions ; <code>pool_pre_ping</code>
+      (<a href="./01-donnees.html#2-un-nom-dénoncé-unique">ch. 01</a>) réduit les
+      erreurs dues aux connexions devenues obsolètes. Il ne rend pas la bascule
+      transparente pour autant : les transactions en vol au moment du failover
+      échouent, et en réplication asynchrone les écritures non encore répliquées
+      sont perdues. C'est à l'application de tolérer ces erreurs et de rejouer
+      &mdash; le pooler ne fait que réduire le bruit.</li>
   <li><strong>L'instance évincée reste en <code>Pending</code>.</strong>
       L'anti-affinité <code>required</code> exige un nœud sans instance PostgreSQL :
       avec 3 workers dont un cordonné, il n'y en a plus. Elle reviendra au

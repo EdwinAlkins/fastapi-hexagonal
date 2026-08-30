@@ -34,7 +34,7 @@ flowchart TB
     end
 
     APP["Application<br/>use cases, DTO, ports techniques"]
-    DOM["Domain<br/>entités, value objects, ports métier<br/>— Python pur —"]
+    DOM["Domain<br/>entités, value objects, ports métier<br/>— sans framework —"]
 
     subgraph driven["Adaptateurs driven (pilotés)"]
         DB["PostgreSQL<br/>SQLAlchemy"]
@@ -60,7 +60,7 @@ données qui dépend de l'interface définie plus au centre.
 
 | Couche | Rôle | Dépend de |
 |--------|------|-----------|
-| `domain/` | Le cœur : entités, value objects, ports métier, exceptions | rien (Python pur) |
+| `domain/` | Le cœur : entités, value objects, ports métier, exceptions | rien (aucun framework) |
 | `application/` | Use cases, DTO, ports techniques | `domain/` |
 | `infrastructure/` | Adaptateurs driven : SQLAlchemy, Valkey, SMTP, RabbitMQ, config | `application/`, `domain/` |
 | `presentation/` | Adaptateurs driving : API HTTP, CLI, worker | tout le reste |
@@ -115,6 +115,12 @@ Deux contrats sont déclarés :
 2. **`forbidden`** — aucun de `fastapi`, `sqlalchemy`, `pydantic`,
    `pydantic_settings`, `starlette` ne doit être atteignable depuis
    `task_manager.domain`, même indirectement.
+
+> **Deux niveaux de contrainte, à ne pas confondre.** Ces contrats disent
+> « domaine sans framework », pas « domaine sans aucune dépendance externe ». Le
+> second est plus strict, et ce projet ne le tient pas : `domain/user/` importe
+> `email_validator`. C'est un choix assumé, pas un oubli — l'exercice 1 ci-dessous
+> porte précisément sur cette frontière.
 
 En cas de violation, l'outil affiche la chaîne d'imports fautive avec le numéro
 de ligne. Il tourne dans `make lint`, en pre-commit et en CI. **C'est là que la

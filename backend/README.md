@@ -54,7 +54,7 @@ Le cœur ne dépend de rien ; **tout pointe vers l'intérieur**.
 │     application  (use cases, ports)                        │
 │        │                                                   │
 │        ▼                                                   │
-│      domain  (entités, value objects, ports)  ← Python pur │
+│     domain (entités, value objects, ports) ← sans framework│
 └──────────────────────────────────────────────────────────┘
 ```
 

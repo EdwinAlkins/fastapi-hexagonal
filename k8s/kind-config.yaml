@@ -6,26 +6,29 @@
 # la topologie multi-nœuds (anti-affinité, reschedule, drain), pas la redondance
 # matérielle — si l'hôte/Docker tombe, tout tombe ensemble.
 #
-# Seul le control-plane porte le mapping des ports 80/443 + le label
-# `ingress-ready` : l'Ingress Controller s'y schedule (nodeSelector), et c'est
-# ce nœud qui expose l'appli sur localhost.
+# Entrée du trafic : le control-plane mappe les ports 80/443 de l'hôte sur les
+# NodePort 30080/30443. Le Service de la Gateway est figé sur ces NodePort
+# (cf. l'EnvoyProxy de `gateway.yaml`). Un NodePort écoute sur TOUS les nœuds :
+# le data plane Envoy peut donc être scheduled n'importe où, et le trafic entré
+# par le control-plane l'atteint via kube-proxy.
+#
+# C'est ce qui remplace l'ancien montage hostPort + label `ingress-ready=true`,
+# hérité du provider Kind d'ingress-nginx : ce label épinglait le contrôleur sur
+# le control-plane. Il n'a plus lieu d'être.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: task-manager
 nodes:
 - role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        node-labels: "ingress-ready=true"
   extraPortMappings:
-  - containerPort: 80
+  - containerPort: 30080
     hostPort: 80
     # listenAddress: "0.0.0.0"
     protocol: TCP
-  - containerPort: 443
+  # Réservé : aucun listener HTTPS n'est déclaré aujourd'hui (pas de TLS dans ce
+  # labo). Le mapping existe pour que l'ajout d'un listener 443 ne demande pas de
+  # recréer le cluster.
+  - containerPort: 30443
     hostPort: 443
     # listenAddress: "0.0.0.0"
     protocol: TCP

@@ -84,7 +84,7 @@ de dogmatisme.</p>
     <tr><td>Value object</td><td>Pas d'identité, égalité par valeur</td><td><code>dataclass(frozen=True, slots=True)</code>, auto-validé, normalisé</td><td><code>NamedTuple</code>, <code>attrs</code>, classe classique</td></tr>
     <tr><td>Identité</td><td>Générée par le domaine, opaque</td><td><code>UUIDv7</code> via <code>uuid.uuid7()</code></td><td>UUIDv4, ULID, séquence base (couplage)</td></tr>
     <tr><td>Entité</td><td>Identité stable, égalité par id</td><td>Attributs publics, mutation par méthodes</td><td>Attributs <code>_privés</code> + <code>@property</code></td></tr>
-    <tr><td>Agrégat</td><td>Frontière de cohérence transactionnelle</td><td><code>Task</code> et <code>User</code> séparés, référence par <code>UserId</code></td><td>Agrégats plus gros si un invariant le justifie</td></tr>
+    <tr><td>Agrégat</td><td>Frontière de cohérence : les invariants qui doivent rester vrais ensemble</td><td><code>Task</code> et <code>User</code> séparés, référence par <code>UserId</code></td><td>Agrégats plus gros si un invariant le justifie</td></tr>
     <tr><td>Portée transactionnelle</td><td>1 transaction = 1 agrégat (prépare la distribution)</td><td>1 transaction = 1 use case</td><td>Saga / outbox si multi-service</td></tr>
     <tr><td>Port de persistance</td><td>Appartient à qui exprime le besoin</td><td><code>domain/&lt;ctx&gt;/repository.py</code></td><td>Port en <code>application/</code> si le modèle n'en dépend pas</td></tr>
     <tr><td>Ports techniques</td><td>Idem</td><td><code>application/shared/</code> (cache, SMTP, broker)</td><td><code>domain/</code> (à éviter), ou pas de port du tout</td></tr>
@@ -110,7 +110,7 @@ de dogmatisme.</p>
   <thead><tr><th>Terme</th><th>Définition</th><th>Chapitre</th></tr></thead>
   <tbody>
     <tr><td><strong>Adaptateur</strong></td><td>Implémentation concrète d'un port, ou point d'entrée qui pilote l'application.</td><td><a href="./01-regle-de-dependance.html">01</a></td></tr>
-    <tr><td><strong>Agrégat</strong></td><td>Groupe d'objets formant une frontière de cohérence transactionnelle.</td><td><a href="./04-les-agregats.html">04</a></td></tr>
+    <tr><td><strong>Agrégat</strong></td><td>Groupe d'objets dont les invariants doivent rester vrais ensemble ; la transaction est le mécanisme habituel de cette cohérence, pas sa définition.</td><td><a href="./04-les-agregats.html">04</a></td></tr>
     <tr><td><strong>Aggregate root</strong></td><td>Racine d'un agrégat : seule porte d'entrée, garante des invariants.</td><td><a href="./04-les-agregats.html">04</a></td></tr>
     <tr><td><strong>Always-valid model</strong></td><td>Principe selon lequel un objet qui existe est nécessairement valide.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
     <tr><td><strong>Anti-corruption layer (ACL)</strong></td><td>Couche de traduction qui empêche le modèle d'un autre contexte de contaminer le tien.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
@@ -134,7 +134,7 @@ de dogmatisme.</p>
     <tr><td><strong>Modèle anémique</strong></td><td>Objets sans comportement, logique reportée à l'extérieur &mdash; l'anti-pattern.</td><td><a href="./03-le-domaine.html">03</a></td></tr>
     <tr><td><strong>Reconstitution</strong></td><td>Reconstruction d'une entité <strong>existante</strong> dans son état, par opposition à sa création. Valide l'état, pas son atteignabilité.</td><td><a href="./10-ecritures-en-masse.html">10</a></td></tr>
     <tr><td><strong>N+1</strong></td><td>Une requête par élément d'une liste, faute de chargement explicite.</td><td><a href="./05-relations-entre-agregats.html">05</a></td></tr>
-    <tr><td><strong>Outbox</strong></td><td>Écrire le message à publier dans la même transaction que la donnée, puis le relayer ; garantit l'<em>at-least-once</em>.</td><td><a href="./08-transactions-et-erreurs.html">08</a>, <a href="./11-cache-et-evenements.html">11</a></td></tr>
+    <tr><td><strong>Outbox</strong></td><td>Écrire le message à publier dans la même transaction que la donnée, puis le relayer ; fournit une publication <em>at-least-once</em>, jamais l'<em>exactly-once</em> à elle seule.</td><td><a href="./08-transactions-et-erreurs.html">08</a>, <a href="./11-cache-et-evenements.html">11</a></td></tr>
     <tr><td><strong>Policy applicative</strong></td><td>Règle propre à un cas d'usage (quota, plafond, pagination), non invariant du domaine.</td><td><a href="./02-ou-vit-une-regle.html">02</a></td></tr>
     <tr><td><strong>Port</strong></td><td>Interface exprimant un besoin, déclarée par la couche qui l'exprime.</td><td><a href="./06-application-et-ports.html">06</a></td></tr>
     <tr><td><strong>Query service</strong></td><td>Composant de lecture seule qui court-circuite les agrégats et renvoie des DTO à plat.</td><td><a href="./09-lectures-et-query-services.html">09</a></td></tr>

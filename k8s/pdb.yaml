@@ -1,5 +1,8 @@
-# PodDisruptionBudget : pendant un drain / rolling update volontaire,
-# au moins 1 pod reste disponible pour chaque workload.
+# PodDisruptionBudget : au moins 1 pod reste disponible pour chaque workload
+# pendant une éviction passant par l'API Eviction (kubectl drain, autoscaler).
+# ⚠️ Un rolling update de Deployment et `kubectl rollout restart` NE consultent
+# PAS le PDB : ils sont pilotés par maxUnavailable / maxSurge et les sondes de
+# readiness. Une suppression directe de pod le contourne également.
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

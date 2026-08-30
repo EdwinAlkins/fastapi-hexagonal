@@ -42,8 +42,9 @@
 <main id="content">
 <header>
   <h1>01. Les données</h1>
-  <p class="lede">PostgreSQL en haute disponibilité, un pooler en mode transaction,
-  et la contrainte qui remonte jusque dans le moteur SQLAlchemy.</p>
+  <p class="lede">PostgreSQL en haute disponibilité <em>logique</em>, un pooler en
+  mode transaction, et la contrainte qui remonte jusque dans le moteur
+  SQLAlchemy.</p>
 </header>
 
 <div class="tldr">
@@ -108,12 +109,33 @@ un failover possible. C'est exactement ce que le cluster à 3 workers rend testa
 et pas un.</p>
 
 <div class="note">
-  <strong>Réplication asynchrone, par défaut</strong>
-  Le manifeste laisse la réplication en asynchrone : priorité à la latence et à la
-  disponibilité des écritures. Un bloc <code>postgresql.synchronous</code> commenté
-  permet de passer en synchrone pour un RPO proche de zéro &mdash; au prix
-  d'écritures qui bloquent si trop peu de réplicas répondent. Le compromis est posé
-  dans le fichier, pas caché.
+  <strong>Réplication asynchrone, par défaut &mdash; et les deux chiffres qui vont avec</strong>
+  <p>Le manifeste laisse la réplication en asynchrone : priorité à la latence et à
+  la disponibilité des écritures. Un bloc <code>postgresql.synchronous</code>
+  commenté permet de passer en synchrone pour un <strong>RPO</strong> proche de zéro
+  &mdash; au prix d'écritures qui bloquent si trop peu de réplicas répondent. Le
+  compromis est posé dans le fichier, pas caché.</p>
+  <p>Ce sont les deux questions à poser avant de choisir. Le <strong>RPO</strong>
+  (<em>recovery point objective</em>) : combien de données accepte-t-on de perdre ?
+  En asynchrone, ce n'est pas zéro &mdash; une transaction commitée sur le primaire
+  qui meurt avant de répliquer est perdue. Le <strong>RTO</strong> (<em>recovery
+  time objective</em>) : combien de temps accepte-t-on d'être indisponible ? Un
+  failover n'est jamais instantané : détection, promotion, bascule du Service,
+  reconnexion des clients &mdash; et les transactions en vol échouent
+  (<a href="./03-resilience.html#scénario-de-drain">ch. 03</a>). Ce dépôt ne se fixe
+  ni l'un ni l'autre : c'est un banc d'essai, pas un engagement de service.</p>
+</div>
+
+<div class="warn">
+  <strong>« Haute disponibilité » veut dire quelque chose de précis</strong>
+  <p>Trois instances sur trois « nœuds » Kind, ce sont trois conteneurs sur
+  <strong>la même machine, le même noyau, le même disque</strong>
+  (<a href="./index.html#la-topologie">voir la topologie</a>). Ce montage teste des
+  <em>comportements</em> &mdash; élection, promotion, bascule du Service,
+  rescheduling &mdash; il ne teste aucune panne indépendante. Et HA ne se confond ni
+  avec durabilité, ni avec sauvegarde, ni avec reprise après sinistre : ce sont
+  quatre propriétés distinctes, qui se paient séparément
+  (<a href="./05-exploitation.html#sauvegarde-et-restauration">ch. 05</a>).</p>
 </div>
 
 <h2 id="le-pooler">Le pooler : deux pods, mode transaction<a class="anchor" href="#le-pooler" aria-label="Lien vers cette section">#</a></h2>
@@ -131,16 +153,20 @@ spec:
     poolMode: transaction
     parameters:
       max_client_conn: "1000"
-      default_pool_size: "20"     # ⚠️ PAR pod : 2 × 20 = 40 connexions serveur</code></pre></div>
+      default_pool_size: "20"     # ⚠️ par pod ET par couple (utilisateur, base)</code></pre></div>
 
 <p>Deux détails qui se paient cher si on les rate :</p>
 
 <ul>
-  <li><strong><code>default_pool_size</code> est par pod.</strong> Avec 2 pods, le
-      pooler ouvre jusqu'à <strong>40</strong> connexions serveur vers le primaire.
-      C'est dimensionné sous le <code>max_connections</code> de PostgreSQL (100 par
-      défaut). Passer les poolers à 5 sans y penser, et la base refuse des
-      connexions.</li>
+  <li><strong><code>default_pool_size</code> se compte par pod <em>et</em> par
+      couple (utilisateur, base).</strong> Ici l'application n'en utilise qu'un
+      seul, <code>task_manager</code> sur <code>task_manager</code> : 2 pods à 20
+      donnent donc une capacité de <strong>40</strong> connexions serveur vers le
+      primaire, dimensionnée sous le <code>max_connections</code> de PostgreSQL (100
+      par défaut). Ce n'est pas une formule universelle : ajouter un second
+      utilisateur ou une seconde base ouvre un pool de plus, et
+      <code>reserve_pool_size</code> s'y ajoute encore. Passer les poolers à 5 sans
+      y penser, et la base refuse des connexions.</li>
   <li><strong>Le Service s'appelle <code>task-manager-pooler</code></strong>, sans
       suffixe. Le <code>-rw</code> appartient au <code>Cluster</code> et vise le
       primaire <em>en direct</em> &mdash; c'est celui qu'utilisent les migrations,
@@ -246,9 +272,24 @@ return create_async_engine(
 
 <h2 id="les-migrations-contournent-le-pooler">Les migrations contournent le pooler<a class="anchor" href="#les-migrations-contournent-le-pooler" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Le DDL s'accommode mal du mode transaction : verrous de longue durée, ordre des
-opérations, sessions qui doivent rester stables. Le <code>Job</code> de migration
-vise donc <strong>PostgreSQL en direct</strong> :</p>
+<p>Contrairement à ce qu'on lit souvent, ce n'est pas que « le DDL ne passe pas en
+transaction pooling » : PostgreSQL a un DDL transactionnel, et l'essentiel d'une
+migration passerait très bien par le pooler. Ce qu'Alembic exige, c'est une
+<strong>session stable et prévisible</strong>, que le mode transaction ne garantit
+pas :</p>
+
+<ul>
+  <li>le verrou consultatif qu'Alembic pose pour sérialiser les migrations est
+      <strong>de session</strong> : en mode transaction, la connexion serveur change
+      sous ses pieds et le verrou ne protège plus rien ;</li>
+  <li><code>CREATE INDEX CONCURRENTLY</code> et <code>ALTER TYPE … ADD VALUE</code>
+      ne peuvent pas s'exécuter à l'intérieur d'une transaction ;</li>
+  <li>les <code>SET</code> de session (<code>lock_timeout</code>,
+      <code>search_path</code>) ne sont pas garantis d'une requête à la suivante ;</li>
+  <li>une migration doit viser le <strong>primaire</strong>, explicitement.</li>
+</ul>
+
+<p>Le <code>Job</code> de migration vise donc <strong>PostgreSQL en direct</strong> :</p>
 
 <div class="snippet" data-lang="yaml"><pre><code># k8s/migrate-job.yaml
 - name: APP_DATABASE_URL
@@ -306,8 +347,9 @@ contient que ce qui n'est pas généré &mdash; et ses valeurs sont des
       Services suivant les rôles ne se réimplémentent pas à la main.</li>
   <li>L'anti-affinité <strong>requise</strong> échange de la souplesse de placement
       contre la garantie qu'un nœud perdu n'emporte qu'une instance.</li>
-  <li><code>default_pool_size</code> est <strong>par pod</strong> de pooler : le
-      total doit rester sous le <code>max_connections</code> de PostgreSQL.</li>
+  <li><code>default_pool_size</code> se compte <strong>par pod et par couple
+      (utilisateur, base)</strong> : c'est la somme qui doit rester sous le
+      <code>max_connections</code> de PostgreSQL, pas le chiffre du manifeste.</li>
   <li>Le mode transaction impose <strong>trois réglages solidaires</strong>, dans
       trois fichiers de trois couches différentes.</li>
   <li>Les migrations <strong>contournent le pooler</strong> et forment une

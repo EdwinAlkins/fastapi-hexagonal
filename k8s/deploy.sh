@@ -6,28 +6,41 @@ set -euo pipefail
 CLUSTER_NAME="task-manager"
 NS="task-manager"
 CNPG_MANIFEST="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.30/releases/cnpg-1.30.0.yaml"
-INGRESS_MANIFEST="https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml"
+# Envoy Gateway : embarque les CRD Gateway API standard (gatewayclasses,
+# gateways, httproutes, referencegrants…), pas besoin de les installer à part.
+ENVOY_GATEWAY_VERSION="v1.9.1"
+ENVOY_GATEWAY_MANIFEST="https://github.com/envoyproxy/gateway/releases/download/${ENVOY_GATEWAY_VERSION}/install.yaml"
 METRICS_SERVER_MANIFEST="https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
 
 # URLs des consoles de dev, figées dans le bundle frontend au build (les
-# boutons de l'en-tête pointent dessus). Doivent correspondre à ingress-dev.yaml.
+# boutons de l'en-tête pointent dessus). Doivent correspondre à httproutes.yaml.
 MAIL_UI_URL="http://mailpit.localhost"
 REDIS_INSIGHT_URL="http://redisinsight.localhost"
 
 # Se placer à la racine du dépôt (parent de ce script), quel que soit le CWD.
 cd "$(dirname "$0")/.."
 
-echo "==> 1/6  Cluster Kind + Ingress Controller"
+echo "==> 1/6  Cluster Kind + Envoy Gateway (${ENVOY_GATEWAY_VERSION})"
 if ! kind get clusters | grep -qx "$CLUSTER_NAME"; then
   kind create cluster --config k8s/kind-config.yaml
 else
   echo "    cluster '$CLUSTER_NAME' déjà présent, on réutilise."
+  # Le mapping d'entrée (hostPort 80 → NodePort 30080) est figé à la CRÉATION du
+  # cluster. Un cluster né avant le passage à Gateway API porte encore l'ancien
+  # mapping 80→80 : rien ne répondra sur http://localhost.
+  if ! docker port "${CLUSTER_NAME}-control-plane" 2>/dev/null | grep -q '^30080/tcp'; then
+    echo "    ⚠️  ce cluster n'expose pas le NodePort 30080 (mapping d'avant Gateway API)."
+    echo "        Recrée-le :  ./k8s/clean.sh && ./k8s/deploy.sh"
+    exit 1
+  fi
 fi
-kubectl apply -f "$INGRESS_MANIFEST"
+# --server-side : les CRD Gateway API dépassent la limite de taille de
+# l'annotation last-applied-configuration d'un apply client-side.
+kubectl apply --server-side -f "$ENVOY_GATEWAY_MANIFEST"
 # rollout status tolère le cas « pod pas encore créé » (contrairement à
 # `kubectl wait` sur un sélecteur, qui échoue si rien ne matche à l'instant T).
-kubectl rollout status deployment/ingress-nginx-controller \
-  -n ingress-nginx --timeout=180s
+kubectl rollout status deployment/envoy-gateway \
+  -n envoy-gateway-system --timeout=300s
 
 echo "==> 2/6  Metrics Server (kubectl top)"
 # Kind utilise des certificats kubelet auto-signés : sans
@@ -84,8 +97,11 @@ kubectl apply -f k8s/frontend-deployment.yaml
 kubectl apply -f k8s/worker-deployment.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/pdb.yaml
-kubectl apply -f k8s/ingress.yaml
-kubectl apply -f k8s/ingress-dev.yaml
+# GatewayClass + EnvoyProxy + Gateway, puis les routes. Envoy Gateway provisionne
+# le data plane (Deployment + Service NodePort) en réaction à la Gateway.
+kubectl apply -f k8s/gateway.yaml
+kubectl wait --for=condition=Programmed gateway/task-manager -n "$NS" --timeout=300s
+kubectl apply -f k8s/httproutes.yaml
 # Segmentation réseau (kindnet applique les NetworkPolicy).
 kubectl apply -f k8s/network-policies.yaml
 

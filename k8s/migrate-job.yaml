@@ -1,6 +1,10 @@
 # Applique le schéma Alembic AVANT l'API et le worker.
 # Équivalent du service `migrate` du compose : connexion DIRECTE à Postgres
-# (task-manager-db-rw), le mode transaction de PgBouncer étant inadapté au DDL.
+# (task-manager-db-rw). Ce n'est pas que le DDL passerait mal en transaction
+# pooling — PostgreSQL a un DDL transactionnel. C'est qu'Alembic a besoin d'une
+# session stable : son verrou consultatif est de SESSION, CREATE INDEX
+# CONCURRENTLY ne peut pas vivre dans une transaction, les SET de session ne
+# survivent pas d'une requête à l'autre, et une migration doit viser le primaire.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -36,7 +40,7 @@ spec:
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef: { name: task-manager-db-app, key: password }
-        # Bypass du pooler pour le DDL.
+        # Bypass du pooler : session directe et prévisible sur le primaire.
         - name: APP_DATABASE_URL
           value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-db-rw:5432/task_manager"
         - name: APP_INIT_DB

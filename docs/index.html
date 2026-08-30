@@ -92,7 +92,7 @@ composition root &mdash; n'est que la machinerie qui rend cette règle tenable.<
 
 <figure class="diagram">
 <svg viewBox="0 0 960 320" role="img" xmlns="http://www.w3.org/2000/svg"
-     aria-label="Trois adaptateurs entrants — API HTTP, CLI et worker RabbitMQ — appellent la couche application, qui entoure le domaine en Python pur. À droite, PostgreSQL, Valkey, SMTP et RabbitMQ implémentent les ports déclarés vers l'intérieur.">
+     aria-label="Trois adaptateurs entrants — API HTTP, CLI et worker RabbitMQ — appellent la couche application, qui entoure le domaine, lequel ne dépend d'aucun framework. À droite, PostgreSQL, Valkey, SMTP et RabbitMQ implémentent les ports déclarés vers l'intérieur.">
   <defs>
     <marker id="fleche" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
@@ -145,7 +145,7 @@ composition root &mdash; n'est que la machinerie qui rend cette règle tenable.<
       <text x="820" y="259">aio-pika</text>
     </g>
 
-    <text x="450" y="222" fill="var(--accent)" font-size="12.5" font-weight="600" text-anchor="middle">Python pur &#183; aucun framework</text>
+    <text x="450" y="222" fill="var(--accent)" font-size="12.5" font-weight="600" text-anchor="middle">sans framework &#183; aucune I/O</text>
 
     <g stroke="var(--muted)" stroke-width="1.5" marker-end="url(#fleche)">
       <line x1="190" y1="76" x2="252" y2="76"/>

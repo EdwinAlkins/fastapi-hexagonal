@@ -73,14 +73,14 @@ publie un événement RabbitMQ ; un **worker** envoie l’e-mail (Mailpit en loc
 ├── frontend/                # SPA Preact (Vite, TanStack Query, Tailwind)
 ├── docker-compose.yml       # stack locale complète
 ├── .env.template            # secrets / ports (copier en .env)
-└── k8s/                     # Kind + CloudNativePG + Ingress + durcissement
+└── k8s/                     # Kind + CloudNativePG + Gateway API + durcissement
 ```
 
 ### Couches backend (tout pointe vers l’intérieur)
 
 ```
 presentation  →  infrastructure  →  application  →  domain
-     (HTTP, worker, CLI)              (use cases)      (Python pur)
+     (HTTP, worker, CLI)              (use cases)      (sans framework)
 ```
 
 Chaque couche est **tranchée par contexte** (`domain/task/`, `domain/user/`, …).
@@ -129,8 +129,10 @@ docker compose up --build
 | Prometheus | http://localhost:9090 |
 
 Les migrations Alembic tournent dans le service one-shot `migrate`, **en
-connexion directe Postgres** (pas via PgBouncer : le mode transaction est
-inadapté au DDL). L’API et le worker passent ensuite par le pooler.
+connexion directe Postgres** (pas via PgBouncer : Alembic a besoin d’une session
+stable — son verrou consultatif est *de session*, et certaines opérations comme
+`CREATE INDEX CONCURRENTLY` ne peuvent pas vivre dans une transaction). L’API et
+le worker passent ensuite par le pooler.
 
 ### Backend seul (hot-reload)
 
@@ -230,7 +232,7 @@ Variables : `.env.template` (préfixe `APP_` côté application).
 
 ### 2. Kubernetes local (Kind)
 
-Manifestes dans [`k8s/`](k8s/) : cluster Kind, Ingress NGINX, **CloudNativePG**
+Manifestes dans [`k8s/`](k8s/) : cluster Kind, **Gateway API** (Envoy Gateway), **CloudNativePG**
 (Postgres + Pooler), opérateur RabbitMQ, Job de migration, HPA, PDB,
 NetworkPolicies, SecurityContext.
 

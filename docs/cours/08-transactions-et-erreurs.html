@@ -306,10 +306,14 @@ mourir <strong>après</strong> avoir publié et <strong>avant</strong> d'avoir m
 la ligne. Au redémarrage, il republie.</p>
 
 <div class="warn">
-  <strong>L'outbox garantit l'<em>at-least-once</em>, jamais l'<em>exactly-once</em></strong>
-  Elle transforme « le message peut être perdu ou fantôme » en « le message
-  arrivera, peut-être plusieurs fois ». C'est un progrès énorme &mdash; mais il rend
-  l'<strong>idempotence du consommateur obligatoire</strong>, pas optionnelle.
+  <strong>À elle seule, l'outbox ne fournit pas d'<em>exactly-once</em> de bout en bout</strong>
+  <p>Ce qu'elle donne, c'est une publication <em>at-least-once</em> : « le message
+  peut être perdu ou fantôme » devient « le message arrivera, peut-être plusieurs
+  fois ». C'est un progrès énorme &mdash; mais il rend l'<strong>idempotence du
+  consommateur obligatoire</strong>, pas optionnelle. Un effet <em>observable</em>
+  équivalent à l'exactly-once reste atteignable : déduplication, contrainte
+  d'unicité, clé d'idempotence. C'est le consommateur qui le construit &mdash;
+  jamais le broker ni l'outbox à eux seuls.</p>
 </div>
 
 <p>Autrement dit : adopter l'outbox sans rendre le consommateur idempotent, c'est
@@ -634,8 +638,8 @@ câblage reste authentique.</p>
   <li>Les effets externes ne se rollback pas : c'est le <strong>dual write
       problem</strong>, et il n'a pas de solution par réordonnancement.</li>
   <li>L'<strong>outbox</strong> rend l'intention de publier transactionnelle, mais
-      garantit l'<em>at-least-once</em> : elle rend l'<strong>idempotence du
-      consommateur obligatoire</strong>.</li>
+      ne fournit qu'une publication <em>at-least-once</em> : elle rend
+      l'<strong>idempotence du consommateur obligatoire</strong>.</li>
   <li>L'idempotence est une propriété du <strong>traitement</strong>, pas du
       message : opération naturellement rejouable, sinon déduplication garantie par
       une contrainte en base.</li>

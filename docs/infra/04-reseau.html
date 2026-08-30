@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>04. Réseau &mdash; Infrastructure &mdash; FastAPI Hexagonal</title>
-<meta name="description" content="Neuf NetworkPolicy d'ingress, une chaîne autorisée et tout le reste refusé, l'Ingress nginx et les consoles de développement en *.localhost.">
+<meta name="description" content="Neuf NetworkPolicy d'ingress, une chaîne autorisée et tout le reste refusé en entrée, la Gateway API avec Envoy Gateway et les consoles de développement en *.localhost.">
 <link rel="stylesheet" href="../assets/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
 </head>
@@ -89,7 +89,7 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
 
 <figure class="diagram">
 <svg viewBox="0 0 940 430" role="img" xmlns="http://www.w3.org/2000/svg"
-     aria-label="ingress-nginx atteint le frontend sur le port 8080. Le frontend et Prometheus atteignent l'API sur 8000. L'API et le worker partagent les mêmes quatre cibles : le pooler sur 5432, RabbitMQ sur 5672, Valkey sur 6379 et Mailpit sur 1025. Le pooler atteint PostgreSQL, et le Job de migration l'atteint en direct. Le frontend, lui, ne peut pas joindre PostgreSQL : aucune politique ne l'autorise.">
+     aria-label="Le data plane Envoy de la Gateway atteint le frontend sur le port 8080. Le frontend et Prometheus atteignent l'API sur 8000. L'API et le worker partagent les mêmes quatre cibles : le pooler sur 5432, RabbitMQ sur 5672, Valkey sur 6379 et Mailpit sur 1025. Le pooler atteint PostgreSQL, et le Job de migration l'atteint en direct. Le frontend, lui, ne peut pas joindre PostgreSQL : aucune politique ne l'autorise.">
   <defs>
     <marker id="fn4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
@@ -112,7 +112,7 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
     <rect x="348" y="150" width="120" height="50" rx="7" fill="var(--raised)" stroke="var(--accent)"/>
 
     <g fill="var(--ink)" font-size="11.5" font-weight="600" text-anchor="middle">
-      <text x="68" y="172">ingress-nginx</text>
+      <text x="68" y="172">gateway</text>
       <text x="238" y="172">frontend</text>
       <text x="408" y="52">prometheus</text>
       <text x="408" y="172">api</text>
@@ -173,7 +173,7 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
     <text x="256" y="255" fill="var(--danger)" font-size="10.5" font-weight="600">frontend → postgres</text>
     <text x="256" y="269" fill="var(--danger)" font-size="10">aucune politique ne l'autorise : refusé</text>
 
-    <text x="470" y="418" fill="var(--muted)" font-size="10.5" text-anchor="middle">Une politique d'ingress par cible ; tout ce qui n'est pas listé est refusé.</text>
+    <text x="470" y="418" fill="var(--muted)" font-size="10.5" text-anchor="middle">Une politique d'ingress par cible ; tout ce qui n'est pas listé est refusé en entrée.</text>
   </g>
 </svg>
 </figure>
@@ -184,15 +184,15 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
 <table>
   <thead><tr><th>Cible</th><th>Sources autorisées</th><th>Ports</th></tr></thead>
   <tbody>
-    <tr><td><code>frontend</code></td><td>namespace <code>ingress-nginx</code></td><td>8080</td></tr>
+    <tr><td><code>frontend</code></td><td>namespace <code>envoy-gateway-system</code></td><td>8080</td></tr>
     <tr><td><code>api</code></td><td><code>frontend</code>, <code>prometheus</code></td><td>8000</td></tr>
     <tr><td>pooler <span class="pill">cnpg.io/podRole</span></td><td><code>api</code>, <code>mail-worker</code>, + opérateur CNPG</td><td>5432</td></tr>
     <tr><td>postgres <span class="pill">cnpg.io/podRole</span></td><td>pods du cluster CNPG (pooler + réplication), Job <code>db-migrate</code>, opérateur</td><td>5432</td></tr>
-    <tr><td><code>rabbitmq</code></td><td><code>api</code>, <code>mail-worker</code> (5672) · ingress (15672) · lui-même (clustering) · opérateur</td><td>5672, 15672, epmd</td></tr>
+    <tr><td><code>rabbitmq</code></td><td><code>api</code>, <code>mail-worker</code> (5672) · gateway (15672) · lui-même (clustering) · opérateur</td><td>5672, 15672, epmd</td></tr>
     <tr><td><code>valkey</code></td><td><code>api</code>, <code>mail-worker</code>, <code>redisinsight</code></td><td>6379</td></tr>
-    <tr><td><code>mailpit</code></td><td><code>api</code>, <code>mail-worker</code> (1025) · ingress (8025)</td><td>1025, 8025</td></tr>
-    <tr><td><code>prometheus</code></td><td>namespace <code>ingress-nginx</code></td><td>9090</td></tr>
-    <tr><td><code>redisinsight</code></td><td>namespace <code>ingress-nginx</code></td><td>5540</td></tr>
+    <tr><td><code>mailpit</code></td><td><code>api</code>, <code>mail-worker</code> (1025) · gateway (8025)</td><td>1025, 8025</td></tr>
+    <tr><td><code>prometheus</code></td><td>namespace <code>envoy-gateway-system</code></td><td>9090</td></tr>
+    <tr><td><code>redisinsight</code></td><td>namespace <code>envoy-gateway-system</code></td><td>5540</td></tr>
   </tbody>
 </table>
 </div>
@@ -249,12 +249,171 @@ une <code>NetworkPolicy</code> non appliquée par le CNI ne produit
   test.
 </div>
 
-<h2 id="lingress">L'Ingress : une entrée pour l'application, une pour les consoles<a class="anchor" href="#lingress" aria-label="Lien vers cette section">#</a></h2>
+<h2 id="la-gateway">La Gateway : quatre objets là où l'Ingress n'en avait qu'un<a class="anchor" href="#la-gateway" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Deux ressources distinctes, ce qui n'est pas un détail : la seconde se supprime
-d'un <code>kubectl delete</code> sans toucher à la première.</p>
+<p>L'entrée du cluster est décrite en <strong>Gateway API</strong>, servie par
+<a href="https://gateway.envoyproxy.io/">Envoy Gateway</a>. Le découpage est le
+cœur du sujet : là où un <code>Ingress</code> mélangeait tout dans un objet plus
+des annotations propriétaires, quatre ressources portent quatre décisions, qui
+n'appartiennent pas aux mêmes personnes.</p>
 
-<div class="snippet" data-lang="yaml"><pre><code># k8s/ingress.yaml — l'application, sans hostname
+<div class="table-wrap">
+<table class="table-principe">
+  <thead><tr><th>Ressource</th><th>Répond à</th><th>Qui la tient</th></tr></thead>
+  <tbody>
+    <tr><td><code>GatewayClass</code></td><td>Quelle implémentation ?</td><td>l'exploitant du cluster</td></tr>
+    <tr><td><code>EnvoyProxy</code> <span class="pill">hors standard</span></td><td>Comment le data plane est câblé ?</td><td>l'exploitant du cluster</td></tr>
+    <tr><td><code>Gateway</code></td><td>Quels ports sont ouverts, pour qui ?</td><td>l'équipe plateforme</td></tr>
+    <tr><td><code>HTTPRoute</code></td><td>Qui répond quoi ?</td><td>l'équipe applicative</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/gateway.yaml — les ports ouverts, et qui peut s'y attacher
+spec:
+  gatewayClassName: eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces: { from: Same }</code></pre></div>
+
+<p><code>allowedRoutes</code> n'a pas d'équivalent en <code>Ingress</code> : seules
+les routes de <code>task-manager</code> peuvent se raccrocher à cette Gateway.
+Avec un <code>Ingress</code>, n'importe quel namespace pouvait revendiquer
+n'importe quel hostname &mdash; un vrai problème de multi-tenance, réglé ici par
+le modèle et non par un contrôleur d'admission.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/httproutes.yaml — l'application, sans hostname : elle attrape tout
+spec:
+  parentRefs:
+  - { name: task-manager, sectionName: http }
+  rules:
+  - matches:
+    - path: { type: PathPrefix, value: / }
+    backendRefs:
+    - { name: frontend, port: 80 }</code></pre></div>
+
+<div class="warn">
+  <strong>Le piège de la migration : <code>hostnames</code> a changé de niveau</strong>
+  <p>Dans un <code>Ingress</code>, <code>host</code> était un attribut de la
+  <em>règle</em> : un seul objet portait les quatre consoles. Dans une
+  <code>HTTPRoute</code>, <code>hostnames</code> est un attribut de la
+  <strong>route</strong>. Il faut donc <strong>une route par hostname</strong> —
+  cinq objets au lieu de deux.</p>
+  <p>C'est plus verbeux, et c'est délibéré : chaque route peut vivre dans son
+  namespace, appartenir à une équipe différente, et être supprimée sans toucher
+  aux autres. La précédence, elle, ne change pas : une route qui déclare un
+  hostname exact l'emporte sur la route applicative qui n'en déclare aucun.</p>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Console</th><th>URL</th><th><code>HTTPRoute</code></th><th>Service &rarr; port</th></tr></thead>
+  <tbody>
+    <tr><td>Application</td><td><code>http://localhost</code></td><td><code>app</code> (sans hostname)</td><td><code>frontend</code> &rarr; 80</td></tr>
+    <tr><td>Mailpit</td><td><code>http://mailpit.localhost</code></td><td><code>mailpit</code></td><td><code>mailpit</code> &rarr; 8025</td></tr>
+    <tr><td>RabbitMQ</td><td><code>http://rabbitmq.localhost</code></td><td><code>rabbitmq</code></td><td><code>rabbitmq</code> &rarr; 15672</td></tr>
+    <tr><td>RedisInsight</td><td><code>http://redisinsight.localhost</code></td><td><code>redisinsight</code></td><td><code>redisinsight</code> &rarr; 5540</td></tr>
+    <tr><td>Prometheus</td><td><code>http://prometheus.localhost</code></td><td><code>prometheus</code></td><td><code>prometheus</code> &rarr; 9090</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>Pourquoi <code>*.localhost</code> fonctionne sans rien configurer</strong>
+  <p>Avec <code>systemd-resolved</code>, tout nom en <code>.localhost</code> résout
+  déjà vers <code>127.0.0.1</code>. Sinon, une ligne dans <code>/etc/hosts</code>
+  suffit. C'est ce qui permet d'exposer cinq interfaces sur le port 80 sans
+  <code>port-forward</code> ni ports exotiques à retenir.</p>
+</div>
+
+<p>Les identifiants de la console RabbitMQ ne sont écrits nulle part : l'opérateur
+les génère dans le secret <code>rabbitmq-default-user</code>. On les lit avec
+<code>kubectl get secret rabbitmq-default-user -n task-manager -o jsonpath='{.data.username}' | base64 -d</code>.</p>
+
+<h3 id="comment-le-trafic-entre">Comment le trafic entre, et pourquoi le label <code>ingress-ready</code> a disparu<a class="anchor" href="#comment-le-trafic-entre" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Envoy Gateway expose une Gateway par un Service <code>LoadBalancer</code>. Sur
+un cluster local, personne ne provisionne d'IP externe : le Service resterait en
+<code>&lt;pending&gt;</code> indéfiniment. On le bascule donc en
+<strong>NodePort figé</strong>, et Kind mappe ce port sur l'hôte.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># k8s/gateway.yaml — l'EnvoyProxy référencé par la GatewayClass
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        externalTrafficPolicy: Cluster    # &lt;- indispensable, cf. ci-dessous
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+              - { port: 80, nodePort: 30080 }   # &lt;- fusion sur la clé `port`
+
+# k8s/kind-config.yaml
+extraPortMappings:
+- { containerPort: 30080, hostPort: 80, protocol: TCP }</code></pre></div>
+
+<p>Le patch fusionne sur <code>port</code>, la clé de fusion des
+<code>ServicePort</code> : on n'écrase que le <code>nodePort</code>, le nom généré
+par Envoy Gateway (<code>http-80</code>) survit. C'est le remplaçant typé des
+annotations <code>nginx.ingress.kubernetes.io/*</code> : un champ validé par une
+CRD, pas une chaîne de caractères interprétée par un contrôleur.</p>
+
+<div class="danger">
+  <strong>Le défaut qui casse tout : <code>externalTrafficPolicy: Local</code></strong>
+  <p>Envoy Gateway met <code>Local</code> par défaut. En <code>Local</code>, un
+  NodePort ne sert que les pods présents <em>sur le nœud contacté</em> : les nœuds
+  sans pod Envoy jettent silencieusement le trafic. Or Kind ne mappe les ports de
+  l'hôte que sur le <strong>control-plane</strong>, où le data plane n'a aucune
+  raison d'être scheduled. Résultat : <code>http://localhost</code> qui ne répond
+  jamais, avec une Gateway <code>Programmed: True</code> et des routes
+  <code>Accepted: True</code> — tout a l'air correct.</p>
+  <p>Le symptôme qui identifie la cause : <code>curl</code> sur l'IP d'un nœud
+  <em>portant</em> un pod Envoy répond 200, sur les autres il expire. Et depuis
+  l'intérieur d'un nœud, <code>curl 127.0.0.1:30080</code> répond 200 même sans pod
+  local — kube-proxy ne restreint que le trafic venu de l'extérieur, ce qui rend le
+  diagnostic trompeur.</p>
+  <p><code>Cluster</code> fait masquer le trafic par kube-proxy et le route vers
+  n'importe quel pod Envoy. Le prix est réel : l'<strong>IP source du client est
+  perdue</strong>. Sans objet ici, où tout vient de l'hôte ; sur un vrai cluster,
+  c'est précisément l'arbitrage que <code>Local</code> cherche à gagner.</p>
+</div>
+
+<p>Une fois <code>Cluster</code> posé, le gain est plus grand qu'il n'y paraît. Un
+<strong>NodePort écoute sur tous les nœuds</strong> : le trafic entre par le
+control-plane, et kube-proxy l'achemine vers les pods Envoy où qu'ils soient. L'ancien montage &mdash; <code>hostPort</code>
+80/443 plus un label <code>ingress-ready=true</code> ciblé par le
+<code>nodeSelector</code> du contrôleur &mdash; épinglait au contraire le point
+d'entrée sur le control-plane. Ce label était un artefact du provider Kind
+d'ingress-nginx, pas une notion Kubernetes ; il a disparu de
+<code>kind-config.yaml</code>, avec le <code>nodeSelector</code> et la toleration
+qui allaient avec.</p>
+
+<div class="danger">
+  <strong>Le mapping est figé à la création du cluster</strong>
+  <p>Un cluster Kind créé avant ce changement porte encore <code>hostPort 80 &rarr;
+  containerPort 80</code> : rien ne répondra sur <code>http://localhost</code>, et
+  aucun <code>kubectl apply</code> n'y changera quoi que ce soit.
+  <code>deploy.sh</code> détecte le cas et s'arrête plutôt que de laisser chercher.
+  Le remède est de recréer le cluster : <code>./k8s/clean.sh &amp;&amp;
+  ./k8s/deploy.sh</code>.</p>
+</div>
+
+<h3 id="ingress-lapi-historique">Ingress, l'API historique<a class="anchor" href="#ingress-lapi-historique" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Ce dépôt utilisait un <code>Ingress</code> jusqu'en août 2026. Le remplacement
+n'est pas une question de goût : le projet <strong>Ingress NGINX a été retiré le
+24 mars 2026</strong> &mdash; plus de releases, plus de correctifs de sécurité,
+plus de maintenance. Garder un contrôleur non maintenu comme unique point d'entrée
+d'un cluster n'était plus défendable, même dans un labo.</p>
+
+<div class="snippet" data-lang="yaml"><pre><code># l'ancien k8s/ingress.yaml, pour comparaison
 spec:
   ingressClassName: nginx
   rules:
@@ -265,43 +424,36 @@ spec:
         backend:
           service: { name: frontend, port: { number: 80 } }</code></pre></div>
 
-<p>Aucun <code>host</code> : la règle attrape tout ce qui arrive, donc
-<code>http://localhost</code>. Le trafic entre par le control-plane, seul nœud à
-porter le mapping des ports 80/443 vers l'hôte et le label
-<code>ingress-ready=true</code> que cible le <code>nodeSelector</code> du
-contrôleur.</p>
+<p>C'est plus court, et c'est précisément le problème : tout ce qui n'entre pas
+dans ce moule &mdash; réécriture de chemin, timeouts, en-têtes, répartition de
+charge, mTLS &mdash; passait par des annotations <strong>propres à chaque
+contrôleur</strong>, non validées, non portables, et non documentées par l'API
+Kubernetes. Gateway API remonte ces réglages dans des ressources typées.</p>
+
+<p>Il faut malgré tout connaître <code>Ingress</code> : c'est encore ce qu'on
+trouve dans l'immense majorité des clusters en service, et la migration est un
+exercice courant. Les correspondances utiles :</p>
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Console</th><th>URL</th><th>Service → port</th></tr></thead>
+  <thead><tr><th>Ingress</th><th>Gateway API</th></tr></thead>
   <tbody>
-    <tr><td>Application</td><td><code>http://localhost</code></td><td><code>frontend</code> → 80</td></tr>
-    <tr><td>Mailpit</td><td><code>http://mailpit.localhost</code></td><td><code>mailpit</code> → 8025</td></tr>
-    <tr><td>RabbitMQ</td><td><code>http://rabbitmq.localhost</code></td><td><code>rabbitmq</code> → 15672</td></tr>
-    <tr><td>RedisInsight</td><td><code>http://redisinsight.localhost</code></td><td><code>redisinsight</code> → 5540</td></tr>
-    <tr><td>Prometheus</td><td><code>http://prometheus.localhost</code></td><td><code>prometheus</code> → 9090</td></tr>
+    <tr><td><code>ingressClassName</code></td><td><code>Gateway.spec.gatewayClassName</code></td></tr>
+    <tr><td><code>rules[].host</code></td><td><code>HTTPRoute.spec.hostnames</code> (niveau route, pas règle)</td></tr>
+    <tr><td><code>rules[].http.paths[]</code></td><td><code>HTTPRoute.spec.rules[].matches[]</code></td></tr>
+    <tr><td><code>backend.service</code></td><td><code>rules[].backendRefs[]</code> (plusieurs backends pondérés possibles)</td></tr>
+    <tr><td>annotations du contrôleur</td><td>champs typés, ou <code>parametersRef</code> vers une CRD d'implémentation</td></tr>
+    <tr><td>&mdash;</td><td><code>Gateway.listeners[].allowedRoutes</code> : le contrôle multi-tenant qui manquait</td></tr>
   </tbody>
 </table>
 </div>
-
-<div class="note">
-  <strong>Pourquoi <code>*.localhost</code> fonctionne sans rien configurer</strong>
-  Avec <code>systemd-resolved</code>, tout nom en <code>.localhost</code> résout
-  déjà vers <code>127.0.0.1</code>. Sinon, une ligne dans <code>/etc/hosts</code>
-  suffit. C'est ce qui permet d'exposer cinq interfaces sur le port 80 sans
-  <code>port-forward</code> ni ports exotiques à retenir.
-</div>
-
-<p>Les identifiants de la console RabbitMQ ne sont écrits nulle part : l'opérateur
-les génère dans le secret <code>rabbitmq-default-user</code>. On les lit avec
-<code>kubectl get secret rabbitmq-default-user -n task-manager -o jsonpath='{.data.username}' | base64 -d</code>.</p>
 
 <h2 id="le-service-du-frontend">Le service du frontend : 80 dehors, 8080 dedans<a class="anchor" href="#le-service-du-frontend" aria-label="Lien vers cette section">#</a></h2>
 
 <div class="snippet" data-lang="yaml"><pre><code>spec:
   selector: { app: frontend }
   ports:
-  - port: 80          # ce que l'Ingress appelle
+  - port: 80          # ce que la HTTPRoute appelle
     targetPort: 8080  # ce que nginx-unprivileged écoute</code></pre></div>
 
 <p>Le décalage vient du durcissement
@@ -322,8 +474,20 @@ que d'y écrire 80.</p>
       <strong>clustering RabbitMQ</strong>, et les <strong>opérateurs</strong>.</li>
   <li>Une <code>NetworkPolicy</code> non appliquée par le CNI échoue en silence :
       il faut la <strong>tester</strong>.</li>
-  <li>Deux Ingress séparés : l'application d'un côté, les consoles de dev de
-      l'autre &mdash; on peut retirer les secondes sans toucher à la première.</li>
+  <li><strong>Gateway API sépare ce que l'Ingress mélangeait</strong> :
+      <code>GatewayClass</code> (l'implémentation), <code>Gateway</code> (les ports
+      ouverts), <code>HTTPRoute</code> (les backends) &mdash; et
+      <code>allowedRoutes</code> dit enfin qui a le droit de s'attacher.</li>
+  <li><code>hostnames</code> est au niveau de la <strong>route</strong>, pas de la
+      règle : une <code>HTTPRoute</code> par hostname. C'est ce qui surprend le plus
+      en migrant depuis un <code>Ingress</code>.</li>
+  <li>Le point d'entrée est un <strong>NodePort figé</strong> mappé par Kind, pas un
+      <code>hostPort</code> épinglé sur le control-plane : le label
+      <code>ingress-ready</code> était un artefact d'ingress-nginx, il a disparu.</li>
+  <li><strong><code>externalTrafficPolicy</code> décide qui peut servir un
+      NodePort.</strong> <code>Local</code> — le défaut d'Envoy Gateway — préserve
+      l'IP source mais n'accepte que les nœuds portant un pod ; <code>Cluster</code>
+      masque et route partout. Sur Kind, seul <code>Cluster</code> fonctionne.</li>
   <li>Le durcissement se propage jusqu'au réseau : port 8080 non privilégié, donc
       <code>targetPort: 8080</code> et une politique qui cible 8080.</li>
 </ul>

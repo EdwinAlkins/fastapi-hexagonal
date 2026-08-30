@@ -35,7 +35,8 @@ spec:
 ---
 # PgBouncer natif CNPG, en mode transaction (aligné sur le compose).
 # Crée un Service `task-manager-pooler` (⚠️ pas de suffixe -rw ; le -rw
-# appartient au Cluster et sert aux migrations DDL en direct).
+# appartient au Cluster et sert aux migrations, qui exigent une session directe
+# sur le primaire — cf. migrate-job.yaml).
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
 metadata:
@@ -46,8 +47,11 @@ spec:
     name: task-manager-db
   # 2 pods PgBouncer derrière le Service `task-manager-pooler` (load-balancés).
   # PgBouncer est stateless → montée en charge horizontale sans risque, pas de
-  # SPOF sur le pooler. ⚠️ default_pool_size est PAR pod : 2×20 = 40 connexions
-  # serveur max vers le primaire (< max_connections=100 de Postgres).
+  # SPOF sur le pooler. ⚠️ default_pool_size se compte PAR pod ET PAR couple
+  # (utilisateur, base) : avec le seul couple task_manager/task_manager utilisé
+  # ici, 2×20 = 40 connexions serveur vers le primaire (< max_connections=100 de
+  # Postgres). Ajouter un utilisateur ou une base ouvre un pool de plus, et
+  # reserve_pool_size s'y ajoute encore — ce n'est pas une borne universelle.
   # (Anti-affinité entre poolers : à ajouter via spec.template en multi-nœuds ;
   # inutile sur Kind mono-nœud, et le webhook CNPG exige alors un template
   # complet — on s'en passe ici.)

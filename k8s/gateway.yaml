@@ -1,0 +1,91 @@
+# Point d'entrée du cluster, en Gateway API (remplace l'Ingress depuis que le
+# projet Ingress NGINX a été retiré, le 24/03/2026).
+#
+# Trois objets, trois responsabilités — c'est tout l'intérêt de l'API :
+#   GatewayClass  « quelle implémentation »  → l'exploitant du cluster
+#   EnvoyProxy    « comment elle est câblée » → paramètres propres à Envoy Gateway
+#   Gateway       « quels ports sont ouverts » → l'équipe plateforme
+#   HTTPRoute     « qui répond quoi »          → l'équipe applicative (httproutes.yaml)
+# Un Ingress mélangeait les quatre dans un seul objet, plus des annotations
+# propriétaires par contrôleur.
+---
+# La classe : quel contrôleur prend en charge les Gateway qui s'y réfèrent.
+# `parametersRef` accroche la configuration spécifique à l'implémentation —
+# c'est le remplaçant typé des annotations `nginx.ingress.kubernetes.io/*`.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: kind-nodeport
+    namespace: envoy-gateway-system
+---
+# Câblage du data plane pour Kind.
+#
+# Par défaut, Envoy Gateway expose la Gateway via un Service LoadBalancer — sans
+# objet sur un cluster local, où personne ne provisionne d'IP externe. On passe
+# donc en NodePort sur un port FIGÉ (30080), que `kind-config.yaml` mappe sur le
+# port 80 de l'hôte. C'est ce qui remplace le montage hostPort + label
+# `ingress-ready` du provider Kind d'ingress-nginx : plus de nodeSelector, plus
+# de toleration, et le data plane peut vivre sur n'importe quel nœud.
+#
+# Le patch fusionne sur la clé `port` (clé de fusion des ServicePort) : on ne
+# touche qu'au nodePort, le nom généré par Envoy Gateway (`http-80`) est
+# préservé.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: kind-nodeport
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        # ⚠️ Envoy Gateway met `Local` par DÉFAUT. En Local, un NodePort ne sert
+        # que les pods présents sur le nœud contacté : les nœuds sans pod Envoy
+        # jettent le trafic. Comme Kind ne mappe les ports de l'hôte que sur le
+        # control-plane, et que le data plane est scheduled sur les workers, on
+        # n'atteindrait jamais l'application.
+        # `Cluster` fait masquer le trafic par kube-proxy et le route vers
+        # n'importe quel pod Envoy. Le prix : l'IP source du client est perdue
+        # (sans objet ici, tout vient de l'hôte).
+        externalTrafficPolicy: Cluster
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+              - port: 80
+                nodePort: 30080
+      # 2 replicas comme les autres workloads exposés : le point d'entrée est le
+      # dernier endroit où l'on veut un SPOF.
+      envoyDeployment:
+        replicas: 2
+---
+# La Gateway : les ports ouverts, et qui a le droit d'y attacher des routes.
+# `allowedRoutes.namespaces.from: Same` — seules les routes de `task-manager`
+# peuvent s'y raccrocher. Un Ingress n'avait pas cette notion : n'importe quel
+# namespace pouvait revendiquer n'importe quel hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: task-manager
+  namespace: task-manager
+spec:
+  gatewayClassName: eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same
+  # TLS : pas de listener HTTPS ici (cf. « ce qui n'est pas couvert », ch. 05).
+  # Le mapping 443 → 30443 existe déjà dans kind-config.yaml pour le jour où
+  # cert-manager entre dans le tableau.

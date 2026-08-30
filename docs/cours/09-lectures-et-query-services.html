@@ -203,12 +203,13 @@ raccourci. Une lecture qui sert à <strong>décider d'une écriture</strong> &md
 charger une tâche pour la compléter &mdash; repasse par l'agrégat, parce que la
 décision, elle, engage bien les invariants.</p>
 
-<p>La règle qui reste, elle, est absolue :</p>
+<p>La règle qui reste, elle, est ferme :</p>
 
 <blockquote>
-  <p><strong>Une écriture repasse toujours par les agrégats.</strong> Un query
-  service est en lecture seule, sans exception. Le jour où il écrit, les invariants
-  ne valent plus rien nulle part.</p>
+  <p><strong>Une écriture qui doit faire respecter des invariants passe par le
+  modèle qui les porte.</strong> Un query service, lui, est en lecture seule, sans
+  exception : le jour où il écrit, les invariants ne valent plus rien nulle
+  part.</p>
 </blockquote>
 
 <h2 id="anatomie-dun-query-service">Anatomie d'un query service<a class="anchor" href="#anatomie-dun-query-service" aria-label="Lien vers cette section">#</a></h2>
@@ -448,8 +449,9 @@ la comparaison lisible.</p>
   <li>Sur un chemin de lecture, on <strong>abandonne délibérément</strong> entités,
       value objects, invariants et séparation des agrégats. Ce n'est pas une
       entorse : c'est le bon usage.</li>
-  <li>La règle qui ne bouge pas : <strong>une écriture repasse toujours par les
-      agrégats</strong> &mdash; y compris quand il y en a cent mille
+  <li>La règle qui ne bouge pas : <strong>une écriture qui doit faire respecter
+      des invariants passe par le modèle qui les porte</strong> &mdash; y compris
+      quand il y en a cent mille
       (<a href="./10-ecritures-en-masse.html">chapitre 10</a>).</li>
   <li>Un <strong>query service</strong> fait le SQL exact et rend un <strong>DTO
       plat</strong>, borné, en lecture seule.</li>

@@ -7,13 +7,14 @@ docker-compose → Kubernetes.
 ## Prérequis
 
 - `docker`, `kind`, `kubectl` installés.
-- Les ports **80/443** de l'hôte libres (mappés vers l'Ingress).
+- Les ports **80/443** de l'hôte libres (mappés vers les NodePort 30080/30443
+  de la Gateway).
 
 ## Fichiers
 
 | Fichier | Rôle |
 |---|---|
-| `kind-config.yaml` | Cluster Kind 4 nœuds (1 control-plane + 3 workers) + ports 80/443 |
+| `kind-config.yaml` | Cluster Kind 4 nœuds (1 control-plane + 3 workers) + mapping 80→30080 / 443→30443 |
 | `namespace.yaml` | Namespace `task-manager` |
 | `secrets.yaml` | Secrets divers (RedisInsight encryption key) - RabbitMQ utilise le secret généré par l'opérateur (`rabbitmq-default-user`) |
 | `database.yaml` | Cluster CNPG (3 instances, anti-affinité) + Pooler (2) |
@@ -24,8 +25,8 @@ docker-compose → Kubernetes.
 | `api-deployment.yaml` | API FastAPI + Service |
 | `worker-deployment.yaml` | Worker d'e-mails |
 | `frontend-deployment.yaml` | Frontend Nginx + Service |
-| `ingress.yaml` | Entrée HTTP → frontend (`http://localhost`) |
-| `ingress-dev.yaml` | Consoles de dev via hostnames `*.localhost` |
+| `gateway.yaml` | GatewayClass `eg` + EnvoyProxy (NodePort figé) + Gateway `task-manager` |
+| `httproutes.yaml` | Une HTTPRoute pour l'app, une par console de dev (`*.localhost`) |
 | `network-policies.yaml` | Segmentation réseau (qui peut parler à qui) |
 | `hpa.yaml` | Autoscaling horizontal : api 2→6, frontend 2→4 (CPU 70 % / mém. 80 %) |
 | `pdb.yaml` | PodDisruptionBudget `minAvailable: 1` (api, frontend, mail-worker) |
@@ -45,12 +46,15 @@ cd ..
 Ou manuellement, dans l'ordre :
 
 ```bash
-# 1. Cluster + Ingress Controller
+# 1. Cluster + Envoy Gateway (install.yaml embarque les CRD Gateway API).
+#    --server-side : les CRD dépassent la limite de l'annotation last-applied.
 kind create cluster --config k8s/kind-config.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=180s
+kubectl apply --server-side -f https://github.com/envoyproxy/gateway/releases/download/v1.9.1/install.yaml
+kubectl rollout status deployment/envoy-gateway -n envoy-gateway-system --timeout=300s
 
-# 2. Metrics Server (requis par le HPA ; sans le patch TLS, il ne remonte rien sur Kind)
+# 2. Metrics Server (requis par le HPA ; sans le patch TLS, il ne remonte rien sur Kind).
+#    ⚠️ --kubelet-insecure-tls désactive la vérification du certificat kubelet :
+#    contournement Kind uniquement, jamais sur un vrai cluster.
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 kubectl patch -n kube-system deployment metrics-server --type=json \
   -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
@@ -93,8 +97,9 @@ kubectl apply -f k8s/frontend-deployment.yaml
 kubectl apply -f k8s/worker-deployment.yaml
 kubectl apply -f k8s/hpa.yaml
 kubectl apply -f k8s/pdb.yaml
-kubectl apply -f k8s/ingress.yaml
-kubectl apply -f k8s/ingress-dev.yaml
+kubectl apply -f k8s/gateway.yaml
+kubectl wait --for=condition=Programmed gateway/task-manager -n task-manager --timeout=300s
+kubectl apply -f k8s/httproutes.yaml
 kubectl apply -f k8s/network-policies.yaml
 ```
 
@@ -102,7 +107,9 @@ kubectl apply -f k8s/network-policies.yaml
 
 L'application est accessible sur **http://localhost**.
 
-Les consoles de dev sont exposées via l'Ingress sur des hostnames dédiés :
+Les consoles de dev sont exposées par la Gateway sur des hostnames dédiés —
+une `HTTPRoute` chacune, `hostnames` étant un champ de la route et non de la
+règle :
 
 | Console | URL | Identifiants |
 |---|---|---|
@@ -152,13 +159,13 @@ recharge. Pas de PITR — on restaure à l'instant d'un dump.
   (images tierces ; `readOnlyRootFilesystem` demande une validation par image).*
 
 **NetworkPolicy** (`network-policies.yaml`) — segmentation testée (kindnet
-l'applique). Une politique d'ingress par cible ; tout le reste est refusé :
+l'applique). Une politique d'ingress par cible ; tout le reste est refusé **en entrée** :
 
 ```
-ingress-nginx → frontend → api → ┬→ pooler → postgres
-                                 ├→ rabbitmq
-                                 ├→ valkey
-                                 └→ mailpit
+gateway (envoy) → frontend → api → ┬→ pooler → postgres
+                                   ├→ rabbitmq
+                                   ├→ valkey
+                                   └→ mailpit
 ```
 
 Le **frontend ne peut jamais joindre postgres/pooler directement** (vérifié :

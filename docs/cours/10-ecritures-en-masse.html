@@ -71,11 +71,12 @@
   personne n'a validés. Mais « passer par le domaine » ne veut pas dire « passer par
   le use case de création » : <code>create()</code> sait fabriquer du neuf, pas
   <strong>reconstituer</strong> de l'existant. Le coût, lui, n'est jamais dans le
-  domaine &mdash; il est dans les allers-retours.
+  domaine &mdash; il est dans les allers-retours. On garde donc les agrégats en
+  mémoire et on groupe les I/O.
 </div>
 
-<p>Le chapitre 09 s'achevait sur une règle qui ne bouge pas : <em>une écriture
-repasse toujours par les agrégats</em>. Reste à savoir ce que ça coûte quand il y
+<p>Le chapitre 09 s'achevait sur une règle qui ne bouge pas : <em>une écriture qui
+doit faire respecter des invariants passe par le modèle qui les porte</em>. Reste à savoir ce que ça coûte quand il y
 en a cent mille d'un coup &mdash; et ce que ça signifie exactement.</p>
 
 <p>Le cas concret de ce dépôt : reprendre l'export NDJSON du chapitre précédent et
@@ -148,6 +149,12 @@ vide est refusé à l'import comme ailleurs.</p>
 <p>Pour des entités qui existaient déjà ailleurs, la seconde question est la bonne.
 La première est même activement nuisible : elle refuserait une tâche terminée sous
 prétexte qu'on ne peut pas <em>naître</em> terminé.</p>
+
+<p>C'est exactement la distinction du chapitre 09. Le bulk writer <strong>ne passe
+pas par le repository</strong> &mdash; il écrit en une requête groupée &mdash; mais
+il passe bien par le modèle qui porte les invariants. Ce n'est donc pas une
+exception à la règle, c'est elle qui est formulée au bon niveau : ce qu'on ne
+contourne jamais, c'est le modèle ; le chemin de persistance, lui, se négocie.</p>
 
 <p>Ce que la reconstitution ne rejoue pas, ce sont les règles de
 <strong>transition</strong> &mdash; et c'est cohérent : elles portent sur des

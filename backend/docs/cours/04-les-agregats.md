@@ -54,8 +54,9 @@ Deux observations décisives.
 
 **1. `OrderLine` est bien *dans* l'agrégat, sous forme d'objets, pas d'IDs.**
 Une ligne de commande n'a aucun sens sans sa commande, et le total de la commande
-doit rester cohérent avec ses lignes à tout instant. Elles partagent la même
-transaction, donc le même agrégat.
+doit rester cohérent avec ses lignes à tout instant. C'est cet invariant qui les
+réunit dans un seul agrégat — et c'est parce qu'elles forment un agrégat qu'elles
+partagent la même transaction, pas l'inverse.
 
 > ⚠️ Retiens bien ceci : **le DDD n'interdit pas les collections d'objets.** Il
 > interdit de traverser les frontières *entre* agrégats par navigation d'objets.

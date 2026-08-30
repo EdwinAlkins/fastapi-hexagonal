@@ -19,7 +19,7 @@ confondre est la première cause de dogmatisme.
 | **Value object** | Pas d'identité, égalité par valeur | `dataclass(frozen=True, slots=True)`, auto-validé, normalisé | `NamedTuple`, `attrs`, classe classique |
 | **Identité** | Générée par le domaine, opaque | `UUIDv7` via `uuid.uuid7()` | UUIDv4, ULID, séquence base (couplage) |
 | **Entité** | Identité stable, égalité par id | Attributs publics, mutation par méthodes | Attributs `_privés` + `@property` |
-| **Agrégat** | Frontière de cohérence transactionnelle | `Task` et `User` séparés, référence par `UserId` | Agrégats plus gros si un invariant le justifie |
+| **Agrégat** | Frontière de cohérence : les invariants qui doivent rester vrais ensemble | `Task` et `User` séparés, référence par `UserId` | Agrégats plus gros si un invariant le justifie |
 | **Portée transactionnelle** | 1 transaction = 1 agrégat (prépare la distribution) | 1 transaction = 1 use case | Saga / outbox si multi-service |
 | **Port de persistance** | Appartient à qui exprime le besoin | `domain/<ctx>/repository.py` | Port en `application/` si le modèle n'en dépend pas |
 | **Ports techniques** | Idem | `application/shared/` (cache, SMTP, broker) | `domain/` (à éviter), ou pas de port du tout |
@@ -42,7 +42,7 @@ confondre est la première cause de dogmatisme.
 | Terme | Définition | Chapitre |
 |---|---|---|
 | **Adaptateur** | Implémentation concrète d'un port, ou point d'entrée qui pilote l'application. | [01](01-regle-de-dependance.md) |
-| **Agrégat** | Groupe d'objets formant une frontière de cohérence transactionnelle. | [04](04-les-agregats.md) |
+| **Agrégat** | Groupe d'objets dont les invariants doivent rester vrais ensemble ; la transaction est le mécanisme habituel de cette cohérence, pas sa définition. | [04](04-les-agregats.md) |
 | **Aggregate root** | Racine d'un agrégat : seule porte d'entrée, garante des invariants. | [04](04-les-agregats.md) |
 | **Always-valid model** | Principe selon lequel un objet qui existe est nécessairement valide. | [03](03-le-domaine.md) |
 | **Bounded context** | Frontière à l'intérieur de laquelle un modèle et son langage restent cohérents. | [03](03-le-domaine.md), [12](12-organisation-et-tests.md) |
@@ -65,7 +65,7 @@ confondre est la première cause de dogmatisme.
 | **Mapper** | Traducteur entité ↔ modèle de persistance ; seul à connaître les deux formes. | [07](07-adaptateurs.md) |
 | **Modèle anémique** | Objets sans comportement, logique reportée à l'extérieur — l'anti-pattern. | [03](03-le-domaine.md) |
 | **N+1** | Une requête par élément d'une liste, faute de chargement explicite. | [05](05-relations-entre-agregats.md) |
-| **Outbox** | Écrire le message à publier dans la même transaction que la donnée, puis le relayer ; garantit l'*at-least-once*. | [08](08-transactions-et-erreurs.md), [11](11-cache-et-evenements.md) |
+| **Outbox** | Écrire le message à publier dans la même transaction que la donnée, puis le relayer ; fournit une publication *at-least-once*, jamais l'*exactly-once* à elle seule. | [08](08-transactions-et-erreurs.md), [11](11-cache-et-evenements.md) |
 | **Policy applicative** | Règle propre à un cas d'usage (quota, plafond, pagination), non invariant du domaine. | [02](02-ou-vit-une-regle.md) |
 | **Port** | Interface exprimant un besoin, déclarée par la couche qui l'exprime. | [06](06-application-et-ports.md) |
 | **Reconstitution** | Reconstruction d'une entité **existante** dans son état, par opposition à sa création. Valide l'état, pas son atteignabilité. | [10](10-ecritures-en-masse.md) |

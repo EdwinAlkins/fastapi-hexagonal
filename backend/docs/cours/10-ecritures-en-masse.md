@@ -8,8 +8,8 @@
 > l'existant. Le coût, lui, n'est jamais dans le domaine — il est dans les
 > allers-retours. On garde donc les agrégats en mémoire et on groupe les I/O.
 
-Le chapitre 09 s'achevait sur une règle qui ne bouge pas : *une écriture repasse
-toujours par les agrégats*. Reste à savoir ce que ça coûte quand il y en a cent
+Le chapitre 09 s'achevait sur une règle qui ne bouge pas : *une écriture qui doit
+faire respecter des invariants passe par le modèle qui les porte*. Reste à savoir ce que ça coûte quand il y en a cent
 mille d'un coup — et ce que ça signifie exactement.
 
 Le cas concret de ce dépôt : reprendre l'export NDJSON du chapitre précédent et
@@ -78,6 +78,12 @@ sous prétexte qu'on ne peut pas *naître* terminé.
 Ce que la reconstitution ne rejoue pas, ce sont les règles de **transition** —
 et c'est cohérent : elles portent sur des changements d'état, elles n'ont pas de
 sens sur un état au repos.
+
+C'est exactement la distinction du chapitre 09. Le bulk writer **ne passe pas par
+le repository** — il écrit en une requête groupée — mais il passe bien par le
+modèle qui porte les invariants. Ce n'est donc pas une exception à la règle, c'est
+elle qui est formulée au bon niveau : ce qu'on ne contourne jamais, c'est le
+modèle ; le chemin de persistance, lui, se négocie.
 
 ### Le trou que les value objects ne voient pas
 

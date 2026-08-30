@@ -123,7 +123,9 @@ class Order:                              # ← RACINE de l'agrégat
 <p><strong>1. <code>OrderLine</code> est bien <em>dans</em> l'agrégat, sous forme
 d'objets, pas d'IDs.</strong> Une ligne de commande n'a aucun sens sans sa
 commande, et le total de la commande doit rester cohérent avec ses lignes à tout
-instant. Elles partagent la même transaction, donc le même agrégat.</p>
+instant. C'est cet invariant qui les réunit dans un seul agrégat &mdash; et c'est
+parce qu'elles forment un agrégat qu'elles partagent la même transaction, pas
+l'inverse.</p>
 
 <div class="warn">
   <strong>Le DDD n'interdit pas les collections d'objets</strong>
