@@ -10,6 +10,7 @@
 <meta property="og:title" content="FastAPI Hexagonal">
 <meta property="og:description" content="Une référence exécutable : architecture hexagonale vérifiée par import-linter, DDD tactique, de Compose à Kind. Cours inclus.">
 <meta property="og:type" content="website">
+<meta name="google-site-verification" content="P8_q5m3CQFlDe184FcNYOAyA1Mddt9Jkh3AhzLzw1QU" />
 </head>
 <body>
 <a class="skip" href="#content">Aller au contenu</a>
@@ -66,7 +67,7 @@ build.</p>
 <span class="proof-add">+ from sqlalchemy import Column</span></code></pre></div>
   </div>
   <div>
-    <p class="proof-label">Le build casse, en pre-commit comme en intégration continue&nbsp;:</p>
+    <p class="proof-label">Le build casse, avec make imports et les hooks installés&nbsp;:</p>
     <div class="snippet" data-lang="console"><pre><code>$ make imports
 
 Analyzed 130 files, 437 dependencies.
@@ -173,8 +174,8 @@ définie plus au centre.</figcaption>
 <h2 id="contenu">Ce qu'on y trouve<a class="anchor" href="#contenu" aria-label="Lien vers cette section">#</a></h2>
 <ul class="cards">
   <li><a href="./cours/01-regle-de-dependance.html"><strong>Une règle, vérifiée</strong>
-      <p>Deux contrats import-linter sur le graphe d'imports réel, en pre-commit et en CI. Pas un schéma dans un README.</p></a></li>
-  <li><a href="./cours/03-le-domaine.html"><strong>Un domaine qui n'importe rien</strong>
+      <p>Deux contrats import-linter sur le graphe d'imports réel, dans make lint et les hooks pre-commit. Pas un schéma dans un README.</p></a></li>
+  <li><a href="./cours/03-le-domaine.html"><strong>Un domaine sans framework</strong>
       <p>Value objects auto-validés, invariants dans les entités, identités UUIDv7 générées par le domaine. Zéro I/O.</p></a></li>
   <li><a href="./cours/07-adaptateurs.html"><strong>Trois adaptateurs entrants</strong>
       <p>API HTTP, CLI et worker RabbitMQ appellent les <em>mêmes</em> use cases. C'est la preuve opérationnelle de l'isolation.</p></a></li>
@@ -192,14 +193,7 @@ définie plus au centre.</figcaption>
 Celui-ci va jusqu'à un cluster Kubernetes, parce que c'est là que les décisions
 prises dans le code se paient &mdash; ou se vérifient.</p>
 
-<p>L'exemple le plus net : le pooler tourne en <strong>mode transaction</strong>,
-ce qui interdit les <em>prepared statements</em> persistants, le
-<code>LISTEN/NOTIFY</code> et les <code>SET</code> de session. Cette contrainte
-d'infra remonte jusque dans le moteur SQLAlchemy de l'application
-(<code>prepared_statement_cache_size=0</code>, un nom d'énoncé unique par client,
-<code>pool_pre_ping</code>) &mdash; et elle impose que les migrations Alembic,
-elles, attaquent <strong>PostgreSQL en direct</strong> via un Job dédié, jamais le
-pooler. Un dépôt qui s'arrête à Compose ne peut pas montrer ça.</p>
+<p>Le pooler fonctionne en <strong>mode transaction</strong> : la connexion PostgreSQL peut changer entre deux transactions. Les usages liés à une session demandent donc une attention particulière. Les réglages SQLAlchemy et le Job Alembic en connexion directe sont détaillés dans le <a href="./infra/01-donnees.html">chapitre sur les données</a>. Ces contraintes existent déjà avec Compose ; Kubernetes y ajoute le placement et le basculement des instances.</p>
 
 <div class="table-wrap">
 <table>
@@ -208,9 +202,9 @@ pooler. Un dépôt qui s'arrête à Compose ne peut pas montrer ça.</p>
     <tr><td>Cluster</td><td>Kind, 1 control-plane + 3 workers</td><td>Reproduire l'anti-affinité et la perte d'un nœud sur un portable</td></tr>
     <tr><td>PostgreSQL</td><td>CloudNativePG, 3 instances + pooler ×2 en mode transaction</td><td>Bascule primaire gérée par l'opérateur, pas par un script</td></tr>
     <tr><td>Broker</td><td>RabbitMQ, 3 nœuds via l'opérateur officiel</td><td>Le worker d'e-mails consomme une vraie file, avec DLQ</td></tr>
-    <tr><td>Montée en charge</td><td>HPA api 2→6, frontend 2→4 · PDB <code>minAvailable: 1</code></td><td>Un drain de nœud ne coupe pas le service</td></tr>
+    <tr><td>Montée en charge</td><td>HPA api 2→6, frontend 2→4 · PDB <code>minAvailable: 1</code></td><td>Limiter les évictions applicatives simultanées</td></tr>
     <tr><td>Durcissement</td><td><code>runAsNonRoot</code>, <code>readOnlyRootFilesystem</code>, capabilities <code>drop ALL</code>, seccomp</td><td>Sur les pods qu'on maîtrise ; les images tierces restent en défaut, et c'est écrit</td></tr>
-    <tr><td>Migrations</td><td>Job Alembic contre PostgreSQL en direct, avant l'API</td><td>Le mode transaction du pooler l'interdirait</td></tr>
+    <tr><td>Migrations</td><td>Job Alembic contre PostgreSQL en direct, avant l'API</td><td>Connexion directe pour maîtriser la session</td></tr>
   </tbody>
 </table>
 </div>
@@ -281,11 +275,11 @@ La base et le cache tournent en conteneurs ; l'API tourne en local.</p>
 cd fastapi-hexagonal
 cp .env.template .env
 
-docker compose up -d postgres pgbouncer valkey
+docker compose up -d postgres pgbouncer valkey rabbitmq mailpit
+docker compose run --rm migrate
 
 cd backend
 uv sync
-uv run alembic upgrade head
 make run                      # &rarr; http://localhost:8000/docs</code></pre></div>
 
 <p>Pour lancer la stack entière (API, worker, frontend, RabbitMQ, Mailpit,
@@ -294,7 +288,8 @@ Prometheus) : <code>docker compose up --build</code> depuis la racine.</p>
 <p>Et pour vérifier que tout tient &mdash; lint, contrats d'architecture, typage
 strict et les trois niveaux de tests :</p>
 
-<div class="snippet" data-lang="bash"><pre><code>cd backend &amp;&amp; make check</code></pre></div>
+<div class="snippet" data-lang="bash"><pre><code># Depuis backend/
+make check</code></pre></div>
 
 <div class="closing">
   <p><strong>Licence MIT. Rien à installer, tout à lire.</strong></p>
