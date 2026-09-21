@@ -98,6 +98,54 @@ Unit of Work explicite passé au use case, décorateur `@transactional`, transac
 script — et sont tout aussi défendables. Ce qui compte est que la
 **responsabilité transactionnelle soit située et unique**, pas la forme exacte.
 
+### Quand committer : avant ou après la réponse ?
+
+Les trois implémentations ci-dessus committent toutes dans la *fermeture* de la
+frontière. Pour la CLI et le worker, c'est sans ambiguïté : la commande ou le
+message est fini. Pour une requête HTTP, c'est un vrai embranchement.
+
+| | **A. Commit avant la réponse** | **B. Commit après la réponse** |
+|---|---|---|
+| Câblage typique | commit explicite dans le chemin du handler, middleware qui committe, ou dépendance dont la sortie est calée sur la fonction | dépendance `yield` dont la fermeture tourne après l'envoi |
+| Une contrainte violée au commit | remonte normalement, tes handlers la mappent | tombe trop tard pour changer le statut |
+| Conséquence | un 500 opaque si personne ne la traduit | une **réponse positive pour une transaction annulée** |
+
+Dans FastAPI, une dépendance `yield` exécute son code de sortie **après** l'envoi
+de la réponse par défaut : c'est la stratégie B. FastAPI documente un paramètre
+`scope` sur `Depends` — `Depends(get_session, scope="function")` fait tourner la
+sortie juste après la fonction de route, donc **avant** l'envoi : c'est la
+stratégie A. Vérifie le comportement de la version que tu utilises plutôt que de
+le supposer.
+
+**Ce projet choisit A** : `presentation/api/dependencies/session.py` expose
+`Depends(get_session, scope="function")`, donc la fermeture et son `commit`
+s'exécutent avant l'envoi de la réponse. Les providers qui dépendent de cette
+session doivent rester compatibles avec ce scope ; une réponse streamée utilise
+un cycle de vie séparé adapté à la durée du flux.
+
+Pour les commandes, garde cette séquence :
+
+```text
+POST · PUT · PATCH · DELETE
+  use case
+    └── flush là où une contrainte doit être traduite
+  COMMIT
+    └── puis construction et envoi du 2xx
+```
+
+Un `201` ou un `204` est une promesse : l'écriture est durable. Le `flush` ne la
+tient pas à lui seul, parce qu'**un `flush` n'est pas un `commit`**. Il fait
+remonter les violations que tu avais anticipées, à l'endroit qui sait encore les
+traduire — c'est son rôle, et il reste utile sous les deux stratégies
+([ch. 02](02-ou-vit-une-regle.md)). Mais une contrainte différée, un échec de
+sérialisation, un trigger, un timeout ou une connexion coupée échouent quand même
+au `COMMIT`, après un `flush` pourtant réussi.
+
+B reste défendable pour les chemins en lecture seule, et pour les écritures dont
+la confirmation est explicitement provisoire — un `202 Accepted` promet
+l'acceptation, pas la durabilité. Ce que B ne doit jamais être, c'est le défaut
+que tu n'as pas choisi.
+
 ### Les limites à connaître
 
 - **Effets non transactionnels.** Un e-mail envoyé ou un message publié pendant
@@ -110,15 +158,19 @@ script — et sont tout aussi défendables. Ce qui compte est que la
   elle est traitée au [chapitre 10](10-ecritures-en-masse.md#la-transaction--ni-une-par-ligne-ni-une-pour-tout).
   La règle « un repository ne committe jamais », elle, ne bouge pas : le pouvoir
   de committer se **demande** par un port, il ne s'obtient pas par effet de bord.
-- **Un échec au `commit` arrive trop tard.** Le commit vit dans la *fermeture* de
-  la dépendance, donc **après** la construction de la réponse. Une contrainte
-  violée à ce moment-là ne devient pas un 500 : mesuré sur ce projet, le client
-  reçoit une réponse **complète et positive** (`201`, corps JSON valide) pour une
-  transaction annulée, pendant que le serveur logue « Exception in ASGI
-  application ». Toute écriture dont une contrainte peut échouer doit donc être
-  poussée plus tôt, par un `flush` explicite dans l'adaptateur, qui traduit alors
-  l'erreur technique en erreur métier
-  ([ch. 02](02-ou-vit-une-regle.md)).
+- **Un échec au `commit` peut arriver trop tard.** L'endroit où vit le commit le
+  décide. Ce projet choisit la stratégie A : l'échec remonte avant l'envoi. Un
+  `flush` explicite reste utile pour déclencher et traduire une contrainte à
+  l'endroit prévu — voir
+  [Quand committer](#quand-committer--avant-ou-après-la-réponse-).
+- **Il n'existe pas d'« après le commit » dans le use case.** La frontière
+  l'entoure : il rend la main *avant* le commit. Tout ce qui ne doit tourner
+  qu'une fois les données persistées se raccroche donc à la frontière, ce qui
+  suppose que celle-ci soit un objet auprès duquel on peut s'enregistrer — pas
+  une simple dépendance `yield`. Et pour un effet qui sort du processus, on ne
+  construit pas ce crochet du tout : on écrit une ligne d'outbox dans la
+  transaction. Les trois cas sont détaillés au
+  [chapitre 11](11-cache-et-evenements.md#qui-dispatche-et-quand-).
 - **PgBouncer en mode transaction.** L'infrastructure de ce projet impose ses
   contraintes (pas de `LISTEN/NOTIFY`, pas de curseur `WITH HOLD`, cache de
   *prepared statements* désactivé). Voir le `CLAUDE.md` du backend.
@@ -216,33 +268,49 @@ counter += 1                    # ❌ NON idempotent
 SET status = 'done'             # ✅ idempotent
 ```
 
-**2. Une table de déduplication**, quand l'effet ne peut pas être rendu
-idempotent (envoyer un e-mail, débiter une carte) :
+**2. Une inbox transactionnelle**, quand le traitement ne modifie que la même
+base que les données métier :
 
 ```python
 async def handle(self, message_id: str, event: ShareTaskNotification) -> None:
-    try:
-        await self._processed.record(message_id)   # INSERT, PK = message_id
-    except AlreadyProcessed:
-        return                                     # déjà traité : on acquitte, on sort
-    await self._do_the_work(event)
+    async with self._uow:
+        try:
+            await self._inbox.claim(message_id)    # INSERT, PK = message_id
+        except AlreadyProcessed:
+            return                                 # transaction déjà commitée : ACK
+        await self._apply_database_changes(event)  # même transaction
 ```
 
-La garantie ne vient pas du code mais de la **contrainte d'unicité en base** —
-même schéma que pour l'unicité d'e-mail ([ch. 02](02-ou-vit-une-regle.md)) :
-l'application donne le message, la base donne la garantie.
+L'enregistrement inbox et les modifications métier **commitent ou rollbackent
+ensemble**. Un crash avant le commit ne laisse aucune marque et le redelivery
+rejoue le travail ; un crash après le commit retrouve la clé et acquitte. La
+garantie vient de la transaction et de la contrainte d'unicité, pas d'un ordre
+d'instructions choisi au hasard.
 
-**3. Une clé métier plutôt qu'un identifiant de message.** Dédupliquer sur
+**3. Un effet externe.** Une transaction PostgreSQL ne peut pas englober un
+fournisseur d'e-mail ou de paiement. Écris alors, dans la transaction inbox, une
+**outbox locale** décrivant l'effet ; un worker séparé la livre et la rejoue. Si
+le fournisseur accepte une clé d'idempotence, passe-lui `message_id` (ou l'id de
+l'outbox) : c'est la seule façon de fermer la fenêtre « appel réussi, crash avant
+le marquage local ».
+
+Sans clé d'idempotence côté fournisseur, l'*exactly-once* est impossible :
+marquer `completed` avant l'appel risque la perte, le faire après risque le
+doublon. Un état `pending / processing / completed`, un lease, un compteur de
+tentatives et de la réconciliation rendent le traitement observable et
+rejouable ; ils ne créent pas une garantie que le système externe ne fournit
+pas. Pour un e-mail, il faut donc choisir et documenter le risque accepté.
+
+**4. Une clé métier plutôt qu'un identifiant de message.** Dédupliquer sur
 `(task_id, user_id, jour)` plutôt que sur un UUID protège aussi contre un
 *republish* légitime après un changement de code. Plus robuste, plus difficile à
 définir.
 
-> **Le piège de l'ordre** : enregistrer le message *après* le traitement laisse
-> une fenêtre où un crash provoque un doublon. L'enregistrer *avant* laisse une
-> fenêtre où un crash empêche le traitement. Il n'y a pas d'ordre parfait — mais
-> « enregistrer d'abord » échoue du bon côté : on perd un traitement, ce qui se
-> détecte et se rejoue, plutôt que d'envoyer deux fois un e-mail, qui ne se
-> reprend pas.
+> **Une ligne `processed` seule n'est pas un protocole.** L'insérer puis committer
+> avant `_do_the_work()` peut perdre définitivement le travail : au redelivery,
+> la ligne bloque précisément le retry normal. Inbox + modifications DB dans une
+> transaction, ou inbox + outbox pour l'externe ; sinon le compromis perte /
+> doublon doit être explicite.
 
 ### Comment le relais lit-il l'outbox ?
 
@@ -443,13 +511,18 @@ inerte à la place de RabbitMQ — le reste du câblage reste authentique.
 - Les repositories **ne committent jamais** et **reçoivent** leur session : c'est
   un *Unit of Work* léger, un choix parmi d'autres — mais la responsabilité doit
   être située quelque part, explicitement.
+- **Pour une commande HTTP, committe avant la réponse.** Un `2xx` est une
+  promesse de durabilité, et un `flush` n'est pas un `commit` : il traduit les
+  violations anticipées, il ne garantit pas que le commit final réussira.
 - Les effets externes ne se rollback pas : c'est le **dual write problem**, et il
   n'a pas de solution par réordonnancement.
 - L'**outbox** rend l'intention de publier transactionnelle, mais ne fournit
   qu'une publication *at-least-once* : elle rend l'**idempotence du consommateur
   obligatoire**.
 - L'idempotence est une propriété du **traitement**, pas du message : opération
-  naturellement rejouable, sinon déduplication garantie par une contrainte en base.
+  naturellement rejouable, inbox atomique avec les écritures DB, ou outbox et
+  clé d'idempotence pour un effet externe. Une ligne `processed` isolée peut
+  transformer un crash en perte définitive.
 - Deux questions décident du besoin : que coûte une **perte** ? que coûte un
   **doublon** ?
 - **Deux hiérarchies d'erreurs** : métier (4xx, non journalisées) et technique

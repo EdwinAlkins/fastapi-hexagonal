@@ -36,7 +36,7 @@ def apply_to_model(model: TaskModel, task: Task) -> None:
 
 def to_domain(model: TaskModel) -> Task:
     """ORM → domaine."""
-    return Task(
+    return Task.reconstitute(
         id=TaskId(model.id),
         owner_id=UserId(model.owner_id),
         title=TaskTitle(model.title),

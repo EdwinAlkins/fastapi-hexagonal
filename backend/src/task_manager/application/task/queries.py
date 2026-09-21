@@ -21,6 +21,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 
+from task_manager.application.task.dto import TaskDTO
+from task_manager.domain.user.value_objects import UserId
+
 
 @dataclass(frozen=True, slots=True)
 class TaskWithOwner:
@@ -49,6 +52,12 @@ class TaskQueryPort(ABC):
     agrégats ne valent plus rien : ils seraient contournables par la porte de
     lecture.
     """
+
+    @abstractmethod
+    async def list_by_owner(
+        self, owner_id: UserId, *, limit: int = 100, offset: int = 0
+    ) -> list[TaskDTO]:
+        """Retourne une page de tâches sans reconstruire les agrégats."""
 
     @abstractmethod
     def stream_with_owner(self) -> AsyncIterator[TaskWithOwner]:

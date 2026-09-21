@@ -38,8 +38,8 @@ def get_list_tasks(tasks: TaskRepositoryDep) -> ListTasks:
     return ListTasks(tasks)
 
 
-def get_list_tasks_by_owner(tasks: TaskRepositoryDep, users: UserRepositoryDep) -> ListTasksByOwner:
-    return ListTasksByOwner(tasks, users)
+def get_list_tasks_by_owner(session: SessionDep, users: UserRepositoryDep) -> ListTasksByOwner:
+    return ListTasksByOwner(SqlAlchemyTaskQueryService(session), users)
 
 
 def get_complete_task(tasks: TaskRepositoryDep) -> CompleteTask:

@@ -71,6 +71,8 @@ publie un événement RabbitMQ ; un **worker** envoie l’e-mail (Mailpit en loc
 │   ├── docs/cours/          # cours d’architecture
 │   └── README.md            # prise en main backend
 ├── frontend/                # SPA Preact (Vite, TanStack Query, Tailwind)
+├── plugins/                 # Agent Skill installable (Claude Code / Codex / Cursor)
+│   └── fastapi-hexagonal-ddd/
 ├── docker-compose.yml       # stack locale complète
 ├── .env.template            # secrets / ports (copier en .env)
 └── k8s/                     # Kind + CloudNativePG + Gateway API + durcissement
@@ -253,6 +255,39 @@ autoscaling.
 
 ---
 
+## Agent Skill installable
+
+Le savoir de ce dépôt est distribué comme **Agent Skill** — utilisable par Claude
+Code, OpenAI Codex et Cursor sur *n'importe quel* projet, pas seulement celui-ci.
+Il transmet la méthode (règle de dépendance, placement des règles, frontières
+d'agrégats, ports, query services, transactions) plutôt que le code.
+
+**Claude Code**
+
+```
+/plugin marketplace add EdwinAlkins/fastapi-hexagonal
+/plugin install fastapi-hexagonal-ddd@fastapi-hexagonal
+```
+
+**OpenAI Codex**
+
+```bash
+codex plugin marketplace add EdwinAlkins/fastapi-hexagonal
+codex plugin add fastapi-hexagonal-ddd@fastapi-hexagonal
+```
+
+**Cursor**
+
+```
+/add-plugin https://github.com/EdwinAlkins/fastapi-hexagonal
+```
+
+Puis installer `fastapi-hexagonal-ddd` depuis Customize.
+
+Détails et contenu : [`plugins/fastapi-hexagonal-ddd/`](plugins/fastapi-hexagonal-ddd/README.md).
+
+---
+
 ## Parcours de lecture recommandé
 
 1. Ce README (carte du dépôt).
@@ -260,6 +295,7 @@ autoscaling.
 3. Code du contexte `user` (tranche verticale minimale) puis `task` (1→n + worker).
 4. [`backend/README.md`](backend/README.md) pour ajouter un use case.
 5. [`k8s/README.md`](k8s/README.md) pour le déploiement.
+6. [`plugins/fastapi-hexagonal-ddd/`](plugins/fastapi-hexagonal-ddd/README.md) pour réutiliser la méthode ailleurs.
 
 Articles / notes annexes (historique du POC) : dossier [`resources/`](resources/).
 

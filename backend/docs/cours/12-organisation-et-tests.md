@@ -166,6 +166,16 @@ Préfère ces **doublures écrites à la main** aux mocks génériques : une `Fa
 qui implémente réellement le port échoue à la compilation (mypy) si le port
 change, là où un `Mock()` continue de passer en mentant.
 
+Le typage ne prouve toutefois que la forme. Exécute la même suite de **contract
+tests** contre chaque adaptateur de repository et sa fake : not-found, unicité,
+ordre, bornes de pagination, identité après sauvegarde, suppression. Une fake qui
+a la bonne signature mais trie différemment ou fait un upsert là où PostgreSQL
+refuse un doublon n'est pas une doublure fidèle.
+
+Conserve aussi les tests propres au moteur : le contrat prouve la parité des
+sémantiques observables ; les tests PostgreSQL prouvent contraintes, isolation et
+comportement du driver.
+
 ### 3. L'intégration : les moteurs réels
 
 Les tests d'intégration exercent toute la chaîne — HTTP → use case → domaine →

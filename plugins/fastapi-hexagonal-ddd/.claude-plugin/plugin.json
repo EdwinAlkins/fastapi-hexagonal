@@ -1,0 +1,21 @@
+{
+  "name": "fastapi-hexagonal-ddd",
+  "description": "Hexagonal architecture and tactical DDD workflow for Python/FastAPI backends: layering, aggregates, ports, adapters, transactions, query services and enforceable import rules.",
+  "version": "1.0.0",
+  "author": {
+    "name": "William Nauroy",
+    "email": "william.nauroy@gmail.com"
+  },
+  "homepage": "https://github.com/EdwinAlkins/fastapi-hexagonal",
+  "repository": "https://github.com/EdwinAlkins/fastapi-hexagonal",
+  "license": "MIT",
+  "keywords": [
+    "architecture",
+    "hexagonal",
+    "ports-and-adapters",
+    "ddd",
+    "fastapi",
+    "python",
+    "clean-architecture"
+  ]
+}

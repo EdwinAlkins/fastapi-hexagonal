@@ -39,17 +39,21 @@ Les trois raisons, par ordre d'importance :
 
 ## « Les tâches d'un user » est une requête
 
-Puisque `User` ne porte pas ses tâches, on les obtient par le port du contexte
-`task` :
+Puisque `User` ne porte pas ses tâches, on les obtient par une requête explicite.
+Pour servir un écran, elle vit naturellement sur un port applicatif et retourne
+un read model :
 
 ```python
-# domain/task/repository.py
-async def list_by_owner(self, owner_id: UserId, *, limit=100, offset=0) -> list[Task]: ...
+# application/task/queries.py
+async def list_by_owner(
+    self, owner_id: str, *, limit: int = 100, offset: int = 0
+) -> list[TaskSummary]: ...
 ```
 
-La navigation « user → ses tâches » devient un **appel explicite**, avec sa
-pagination. C'est plus verbeux qu'un attribut, et c'est le but : le coût de la
-requête redevient visible dans le code qui la déclenche.
+Une recherche sur le repository domaine ne se justifie que si l'appelant doit
+charger les agrégats pour protéger leurs invariants. La navigation « user → ses
+tâches » reste un **appel explicite** : le coût et l'intention de la requête sont
+visibles dans le code qui la déclenche.
 
 ```mermaid
 flowchart LR
@@ -98,8 +102,9 @@ la **garantie**.
 ## Le piège du N+1 (côté lecture)
 
 Si tu charges un `User` **avec** ses tâches pour une vue de lecture, attention :
-en SQLAlchemy **async**, le chargement paresseux implicite est interdit. C'est une
-contrainte bienvenue — elle t'oblige à être explicite :
+en SQLAlchemy **async**, déclencher implicitement de l'I/O par un simple accès
+d'attribut est problématique et lève couramment une erreur. Le choix le plus clair
+pour une vue reste un chargement explicite :
 
 ```python
 select(UserModel).options(selectinload(UserModel.tasks))   # 1 requête (+1), pas N

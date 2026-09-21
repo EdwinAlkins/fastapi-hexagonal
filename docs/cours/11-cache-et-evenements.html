@@ -228,7 +228,64 @@ class Task:
         self.completed_at = _now()
         self._events.append(TaskCompleted(task_id=self.id, owner_id=self.owner_id))</code></pre></div>
 
-<p>L’entité <strong>enregistre</strong> un fait sans faire d’I/O. Une couche d’orchestration collecte les événements. Des handlers internes peuvent être exécutés avant commit si leurs écritures partagent la transaction ; les effets externes exigent un traitement après commit ou une outbox. Les garder seulement en mémoire après commit laisse une fenêtre de perte en cas de crash.</p>
+<p>L’entité <strong>enregistre</strong> un fait sans faire d’I/O ; elle n'envoie
+rien elle-même. C'est ce qui permet au domaine de dire «&nbsp;ceci s'est produit&nbsp;»
+sans jamais connaître les e-mails, le broker, ni le moindre effet de bord.</p>
+
+<h4 id="qui-dispatche-et-quand-">Qui dispatche, et quand ?<a class="anchor" href="#qui-dispatche-et-quand-" aria-label="Lien vers cette section">#</a></h4>
+
+<p>On lit souvent «&nbsp;le use case collecte les événements après le commit et les
+dispatche&nbsp;». C'est impossible ici, et la raison est structurelle : la
+transaction <strong>entoure</strong> le use case
+(<a href="./08-transactions-et-erreurs.html">ch. 08</a>).</p>
+
+<div class="snippet" data-lang="text"><pre><code>adaptateur primaire
+└── transaction
+    └── use case
+        └── repositories</code></pre></div>
+
+<p>Le use case rend la main <strong>avant</strong> le commit. Il n'existe donc aucun
+«&nbsp;après le commit&nbsp;» à l'intérieur. Le moment du dispatch est une propriété
+de la <strong>frontière</strong>, pas du use case. Trois cas, à ne pas confondre :</p>
+
+<ol>
+  <li><strong>Handler interne, même transaction.</strong> Le handler fait partie de
+      l'opération : incrémenter un compteur, écrire une ligne d'audit. Le use case
+      collecte <code>pull_events()</code> et dispatche lui-même, avant de rendre la
+      main. Les écritures rejoignent la transaction et sont annulées avec elle
+      &mdash; et leur échec fait échouer l'opération, ce qui est exactement le
+      contrat voulu. D'où la règle : rien de non transactionnel dans ce cas.</li>
+  <li><strong>Notification interne, après commit.</strong> Le handler ne doit tourner
+      que si les données sont réellement persistées, mais son effet reste local et a
+      le droit d'être «&nbsp;au mieux&nbsp;» : invalider une clé de cache, rafraîchir
+      un index. Le use case se contente de <em>collecter</em> ; c'est la
+      <strong>frontière</strong> qui dispatche, parce qu'elle seule sait que le commit
+      a réussi. Cela suppose que la frontière soit un objet auprès duquel on peut
+      s'enregistrer &mdash; un <code>UnitOfWorkPort</code> explicite, un collecteur à
+      portée de requête. Une dépendance <code>yield</code> ne te le donne pas
+      gratuitement. Et ça reste «&nbsp;au mieux&nbsp;» : le processus peut mourir
+      entre le commit et le dispatch.</li>
+  <li><strong>Effet qui sort du processus : l'outbox.</strong> C'est la recommandation
+      par défaut dès qu'on parle à RabbitMQ, à un fournisseur d'e-mail ou à un autre
+      service. Le use case traduit l'événement de domaine en <strong>événement
+      d'intégration</strong> et l'écrit comme une ligne d'outbox, dans la même session
+      que les données métier ; un relais séparé le publie.</li>
+</ol>
+
+<div class="snippet" data-lang="text"><pre><code>use case → ligne d'outbox (même session)
+──────────────────── COMMIT ────────────────────
+relais → RabbitMQ</code></pre></div>
+
+<p>Remarque ce dont le troisième cas n'a <strong>pas</strong> besoin : d'un crochet
+après commit. C'est précisément ce qui le rend robuste &mdash; la décision de publier
+est validée atomiquement avec les données, et la livraison devient un problème
+séparé et rejouable
+(<a href="./08-transactions-et-erreurs.html#loutbox--rendre-lintention-transactionnelle">ch. 08</a>).</p>
+
+<div class="warn"><strong>Un événement de domaine ne part jamais tel quel sur le réseau.</strong>
+<p>Le publier revient à exporter ton vocabulaire interne comme un contrat public
+qu'il faudra ensuite versionner. La traduction domaine → intégration est le travail
+du use case, et ce n'est pas une formalité.</p></div>
 
 <h3 id="ce-que-fait-ce-projet">Ce que fait ce projet<a class="anchor" href="#ce-que-fait-ce-projet" aria-label="Lien vers cette section">#</a></h3>
 
@@ -406,6 +463,10 @@ non-HTTP, ce qu'aucun <code>BackgroundTasks</code> n'aurait illustré
       <strong>événement d'intégration</strong> (émis par l'application, contrat
       public).</li>
   <li>L'entité <strong>enregistre</strong> un événement, elle ne l'envoie pas.</li>
+  <li><strong>Le use case n'a pas d'«&nbsp;après le commit&nbsp;»</strong> : la
+      transaction l'entoure. Trois cas distincts &mdash; handler dans la même
+      transaction, notification confiée à la frontière, ou <strong>outbox</strong> pour
+      tout ce qui sort du processus.</li>
   <li>Publier avant le commit est un compromis : le pattern <strong>outbox</strong>
       est la réponse quand ça devient inacceptable.</li>
   <li>Un <strong>broker</strong> ne sert pas à garantir la livraison, mais à

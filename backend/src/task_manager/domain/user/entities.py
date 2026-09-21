@@ -3,7 +3,7 @@
 Un utilisateur possède des tâches (relation 1→n), mais l'agrégat ne charge
 *jamais* ses tâches : chaque agrégat a sa propre frontière de cohérence. La
 navigation « user → ses tâches » est une requête servie par le contexte ``task``
-(``TaskRepository.list_by_owner``), pas une collection portée par ``User``.
+(``TaskQueryPort.list_by_owner``), pas une collection portée par ``User``.
 """
 
 from __future__ import annotations

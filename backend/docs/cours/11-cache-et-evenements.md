@@ -105,10 +105,71 @@ class Task:
         self._events.append(TaskCompleted(task_id=self.id, owner_id=self.owner_id))
 ```
 
-L'entité **enregistre** l'événement ; elle n'envoie rien elle-même. Le use case
-collecte `task.pull_events()` après le commit et les dispatche. C'est ce qui
+L'entité **enregistre** l'événement ; elle n'envoie rien elle-même. C'est ce qui
 permet au domaine de dire « ceci s'est produit » sans jamais connaître les
 e-mails, le broker, ni le moindre effet de bord.
+
+#### Qui dispatche, et quand ?
+
+On lit souvent « le use case collecte les événements après le commit et les
+dispatche ». C'est impossible ici, et la raison est structurelle : la transaction
+**entoure** le use case ([ch. 08](08-transactions-et-erreurs.md)).
+
+```text
+adaptateur primaire
+└── transaction
+    └── use case
+        └── repositories
+```
+
+Le use case rend la main **avant** le commit. Il n'existe donc aucun « après le
+commit » à l'intérieur. Le moment du dispatch est une propriété de la
+**frontière**, pas du use case. Trois cas, à ne pas confondre :
+
+1. **Handler interne, même transaction.** Le handler fait partie de l'opération :
+   incrémenter un compteur, écrire une ligne d'audit. Le use case collecte
+   `pull_events()` et dispatche lui-même, avant de rendre la main. Les écritures
+   rejoignent la transaction et sont annulées avec elle — et leur échec fait
+   échouer l'opération, ce qui est exactement le contrat voulu. D'où la règle :
+   rien de non transactionnel dans ce cas.
+
+2. **Notification interne, après commit.** Le handler ne doit tourner que si les
+   données sont réellement persistées, mais son effet reste local et a le droit
+   d'être « au mieux » : invalider une clé de cache, rafraîchir un index.
+
+   ```text
+   use case → collecte les événements → les confie à la frontière
+   frontière → COMMIT → dispatch
+   ```
+
+   Le use case se contente de *collecter* ; c'est la **frontière** qui dispatche,
+   parce qu'elle seule sait que le commit a réussi. Et cela suppose que la
+   frontière soit un objet auprès duquel on peut s'enregistrer — un
+   `UnitOfWorkPort` explicite, un collecteur à portée de requête. Une dépendance
+   `yield` ne te le donne pas gratuitement. Ça reste « au mieux » : le processus
+   peut mourir entre le commit et le dispatch.
+
+3. **Effet qui sort du processus : l'outbox.** C'est la recommandation par défaut
+   dès qu'on parle à RabbitMQ, à un fournisseur d'e-mail ou à un autre service.
+   Le use case traduit l'événement de domaine en **événement d'intégration** et
+   l'écrit comme une ligne d'outbox, dans la même session que les données métier ;
+   un relais séparé le publie.
+
+   ```text
+   use case → ligne d'outbox (même session)
+   ──────────────────── COMMIT ────────────────────
+   relais → RabbitMQ
+   ```
+
+   Remarque ce dont ce cas n'a **pas** besoin : d'un crochet après commit. C'est
+   précisément ce qui le rend robuste — la décision de publier est validée
+   atomiquement avec les données, et la livraison devient un problème séparé et
+   rejouable ([ch. 08](08-transactions-et-erreurs.md#loutbox--rendre-lintention-transactionnelle)).
+
+Une règle relie les trois : **un événement de domaine ne part jamais tel quel sur
+le réseau.** Le publier revient à exporter ton vocabulaire interne comme un
+contrat public qu'il faudra ensuite versionner. La traduction domaine →
+intégration est le travail du use case, et ce n'est pas une formalité.
 
 ### Ce que fait ce projet
 
@@ -280,6 +341,9 @@ dépôt sert de démonstration : il montre un adaptateur driving non-HTTP, ce qu
 - **Événement de domaine** (émis par l'agrégat, interne) ≠ **événement
   d'intégration** (émis par l'application, contrat public).
 - L'entité **enregistre** un événement, elle ne l'envoie pas.
+- **Le use case n'a pas d'« après le commit »** : la transaction l'entoure. Trois
+  cas distincts — handler dans la même transaction, notification confiée à la
+  frontière, ou **outbox** pour tout ce qui sort du processus.
 - Publier avant le commit est un compromis : le pattern **outbox** est la réponse
   quand ça devient inacceptable.
 - Un **broker** ne sert pas à garantir la livraison, mais à **lisser la charge**,

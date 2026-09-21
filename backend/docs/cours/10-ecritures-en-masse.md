@@ -61,15 +61,15 @@ réconciliation, six mois plus tard.
 
 ## Reconstituer, ce n'est pas contourner
 
-Le bon point d'entrée est le **constructeur**, exactement ce que fait déjà
+Le bon point d'entrée est **`reconstitute()`**, pour l'import comme pour
 `mappers.to_domain` quand il relit une ligne. Et la validation ne disparaît pas :
-le constructeur construit `TaskId`, `UserId`, `TaskTitle`, `TaskStatus` — un
-titre vide est refusé à l'import comme ailleurs.
+la méthode construit `TaskId`, `UserId`, `TaskTitle`, `TaskStatus` — un titre
+vide est refusé quelle que soit la provenance.
 
 La distinction à retenir :
 
 > `create()` + les transitions répondent à « **cet état est-il atteignable ?** »
-> Le constructeur + les value objects répondent à « **cet état est-il valide ?** »
+> `reconstitute()` + les value objects répondent à « **cet état est-il valide ?** »
 
 Pour des entités qui existaient déjà ailleurs, la seconde question est la bonne.
 La première est même activement nuisible : elle refuserait une tâche terminée
@@ -104,10 +104,11 @@ def reconstitute(cls, *, id, owner_id, title, description, status,
     return cls(...)
 ```
 
-`reconstitute` est délibérément **plus stricte que le mapper**. `to_domain` relit
-*notre* base, dont nous sommes la source de vérité ; un import relit un fichier
-dont nous ne garantissons rien. La même opération technique, deux niveaux de
-confiance — et donc deux méthodes.
+`reconstitute` vérifie **tous les invariants intrinsèques de l'état**, quelle que
+soit sa provenance. Le mapper SQLAlchemy l'appelle lui aussi : une ancienne
+version, une migration, un script ou une intervention manuelle peuvent rendre
+la base incohérente. Les contrôles propres à un CSV restent des validations
+supplémentaires en amont ; ils ne remplacent pas les invariants de l'entité.
 
 ## Où part vraiment le temps
 

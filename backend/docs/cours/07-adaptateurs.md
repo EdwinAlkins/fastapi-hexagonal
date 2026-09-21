@@ -51,7 +51,7 @@ deux formes.
 ```python
 # infrastructure/persistence/task/mappers.py
 def to_domain(model: TaskModel) -> Task:          # ORM → domaine
-    return Task(
+    return Task.reconstitute(
         id=TaskId(model.id),
         owner_id=UserId(model.owner_id),
         title=TaskTitle(model.title),
@@ -62,10 +62,11 @@ def to_model(task: Task) -> TaskModel:            # domaine → ORM
     return TaskModel(id=task.id.value, owner_id=task.owner_id.value, ...)
 ```
 
-Remarque `to_domain` : il utilise le **constructeur** de `Task`, pas la factory
+Remarque `to_domain` : il utilise **`Task.reconstitute()`**, pas la factory
 `Task.create()`. Reconstituer une tâche existante n'est pas en créer une neuve
 ([ch. 03](03-le-domaine.md#les-factories--construire-un-objet-valide)) — on ne
-veut ni régénérer l'identité ni réinitialiser `created_at`.
+veut ni régénérer l'identité ni réinitialiser `created_at`, et la base ne peut
+pas contourner les invariants intrinsèques de l'entité.
 
 ### Le repository : implémenter le port
 
@@ -100,9 +101,9 @@ Trois règles de conduite pour un repository :
   (`"users.id"`) et n'a besoin d'aucun import.
 - **Ne pas masquer le builtin `list`.** Une méthode `list()` dans une classe fait
   que toute annotation `list[T]` **écrite après elle** se résout vers la méthode
-  (erreur mypy). D'où l'ordre dans `TaskRepository` : `list_by_owner` est déclarée
-  **avant** `list`, avec un commentaire pour que personne ne « range » les
-  méthodes par ordre alphabétique.
+  (erreur mypy). Préfère un nom intentionnel comme `list_page` sur un query port ;
+  sinon utilise `builtins.list` dans les annotations ou ordonne les méthodes avec
+  précaution.
 
 ## Côté driving : trois adaptateurs, les mêmes use cases
 

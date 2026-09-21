@@ -1,0 +1,22 @@
+{
+  "name": "fastapi-hexagonal",
+  "owner": {
+    "name": "William Nauroy",
+    "email": "william.nauroy@gmail.com"
+  },
+  "metadata": {
+    "description": "Reusable software-architecture skills extracted from the fastapi-hexagonal reference project.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "fastapi-hexagonal-ddd",
+      "source": "./plugins/fastapi-hexagonal-ddd",
+      "description": "Design, review or extend Python/FastAPI backends with hexagonal architecture and tactical DDD.",
+      "strict": false,
+      "skills": [
+        "./skills/fastapi-hexagonal-ddd"
+      ]
+    }
+  ]
+}

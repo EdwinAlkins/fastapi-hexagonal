@@ -197,12 +197,15 @@ quand tu regretteras de ne pas l'avoir fait.
 Tous les contextes identifiés ne méritent pas d'exister dans le code
 **aujourd'hui**. Classe-les :
 
-- **Le cœur** (*core domain*) — ce qui fait la valeur, ce que personne d'autre ne
-  fait à ta place. C'est là que va l'effort tactique du cours : agrégats,
-  invariants, tests. Il y en a **un**, rarement deux.
-- **Le support** — nécessaire mais banal. Un CRUD honnête suffit
+- **Le cœur** (*core domain*) — ce qui crée une valeur différenciante dans ce
+  métier. C'est là que va l'effort tactique : agrégats, invariants, tests. Beaucoup
+  de produits ont un cœur dominant ; plusieurs sont possibles quand plusieurs
+  avantages indépendants le justifient réellement.
+- **Le support** — nécessaire mais peu différenciant. Un CRUD honnête peut suffire
   ([ch. 11](cours/13-demarrer-un-projet.md#quand-ne-pas-utiliser-cette-architecture)).
-- **Le générique** — auth, facturation, notifications. **Achète, n'écris pas.**
+- **Le générique** — capacité disponible comme commodité. Achète-la quand elle ne
+  te différencie pas ; l'auth, la facturation ou les notifications peuvent au
+  contraire être le cœur d'une entreprise spécialisée dans ce domaine.
 
 L'erreur classique est d'appliquer le traitement complet du cours aux trois
 catégories. Le vrai geste stratégique, c'est de décider **où tu n'investis pas**.
@@ -218,8 +221,10 @@ disqualifier à lui seul.
    en a deux, la frontière est probablement mal placée. Signal fort, pas preuve :
    c'est la cohérence du *modèle* qui tranche, pas le lexique seul.
 2. **Le test de la transaction** — ce qui doit être cohérent *immédiatement*
-   est-il à l'intérieur ? Si une règle exige une cohérence instantanée entre deux
-   contextes, ils n'en font qu'un ([ch. 04](cours/04-les-agregats.md)).
+   est-il à l'intérieur ? Un invariant synchrone entre deux contextes est un
+   signal fort que la frontière est mal placée, pas une preuve : une infrastructure
+   partagée ou un protocole de coordination explicite peut être un compromis
+   délibéré ([ch. 04](cours/04-les-agregats.md)).
 3. **Le test de l'équipe** — une équipe peut-elle posséder ce contexte de bout en
    bout ? Un contexte qui exige trois équipes pour bouger n'est pas autonome.
    (Corollaire de la loi de Conway : ton découpage finira par ressembler à ton

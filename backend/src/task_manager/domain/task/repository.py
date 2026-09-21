@@ -10,7 +10,6 @@ from abc import ABC, abstractmethod
 
 from task_manager.domain.task.entities import Task
 from task_manager.domain.task.value_objects import TaskId
-from task_manager.domain.user.value_objects import UserId
 
 
 class TaskRepository(ABC):
@@ -23,14 +22,6 @@ class TaskRepository(ABC):
     @abstractmethod
     async def get(self, task_id: TaskId) -> Task:
         """Récupère une tâche. Lève ``TaskNotFound`` si absente."""
-
-    # Déclarée avant ``list`` : une annotation ``list[Task]`` placée après la
-    # méthode ``list`` la résoudrait vers cette méthode (shadowing du builtin).
-    @abstractmethod
-    async def list_by_owner(
-        self, owner_id: UserId, *, limit: int = 100, offset: int = 0
-    ) -> list[Task]:
-        """Retourne les tâches d'un utilisateur donné (côté « n » de la relation)."""
 
     @abstractmethod
     async def list(self, *, limit: int = 100, offset: int = 0) -> list[Task]:

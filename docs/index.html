@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FastAPI Hexagonal &mdash; une référence exécutable, pas un schéma</title>
-<meta name="description" content="Un dépôt à lire et à copier pour faire du FastAPI hexagonal comme en vrai : DDD tactique, contrats d'architecture vérifiés en CI, de Docker Compose à Kubernetes. Cours de 15 chapitres inclus.">
+<meta name="description" content="Un dépôt à lire et à copier pour faire du FastAPI hexagonal comme en vrai : DDD tactique, contrats d'architecture vérifiés en CI, de Docker Compose à Kubernetes. Cours de 15 chapitres et Agent Skill inclus.">
 <link rel="stylesheet" href="./assets/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#11042;</text></svg>">
 <meta property="og:title" content="FastAPI Hexagonal">
@@ -31,7 +31,9 @@
   <p class="lede"><strong>Une référence exécutable, pas un schéma.</strong>
   Un dépôt à lire et à copier pour faire du FastAPI hexagonal comme en vrai, avec
   les filets de sécurité et le déploiement qui vont avec &mdash; pas un CRUD
-  déguisé en slides.</p>
+  déguisé en slides. Et la même méthode <a href="#skill">s'installe dans ton
+  assistant de code</a>, Claude Code, Codex ou Cursor, pour l'appliquer sur tes propres
+  projets.</p>
   <div class="cta">
     <a class="primary" href="./cours/index.html">Lire le cours</a>
     <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">Le dépôt</a>
@@ -183,6 +185,8 @@ définie plus au centre.</figcaption>
       <p>Une hiérarchie sémantique mappée en 404/409/422, une autre pour les dépendances indisponibles en 503.</p></a></li>
   <li><a href="./cours/12-organisation-et-tests.html"><strong>Trois niveaux de tests</strong>
       <p>Domaine pur, use cases sur ports doublés, intégration sur un PostgreSQL et un Valkey jetables. Pas de SQLite de complaisance.</p></a></li>
+  <li><a href="#skill"><strong>Un Agent Skill installable</strong>
+      <p>La même méthode, utilisable par Claude Code, Codex et Cursor sur tes propres projets. Le principe transmis, pas le code à recopier.</p></a></li>
   <li><a href="./infra/index.html"><strong>De Compose à Kind</strong>
       <p>CloudNativePG, opérateur RabbitMQ, NetworkPolicy testées, HPA, securityContext durci. La même rigueur jusqu'à l'infra.</p></a></li>
 </ul>
@@ -223,8 +227,9 @@ l'exploitation.</p>
     <tr><td>Comprendre comment on isole un domaine, avec la preuve</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
     <tr><td>Un exemple complet de use case à la NetworkPolicy</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
     <tr><td>Un support de cours ou un kata d'équipe</td><td><span class="pill pill-ok">Oui</span></td><td>&mdash;</td></tr>
+    <tr><td>Une méthode que ton assistant de code applique avec toi</td><td><span class="pill pill-ok">Oui</span></td><td>L'<a href="#skill">Agent Skill</a>, dans Claude Code, Codex et Cursor &mdash; il transmet les décisions, il ne génère pas l'appli à ta place</td></tr>
     <tr><td>Un starter « clone and ship to prod »</td><td><span class="pill pill-danger">Non</span></td><td><a href="https://github.com/fastapi/full-stack-fastapi-template">full-stack-fastapi-template</a></td></tr>
-    <tr><td>Un framework, une bibliothèque, un paquet PyPI</td><td><span class="pill pill-danger">Non</span></td><td>Ce dépôt se lit et se copie, il ne s'installe pas</td></tr>
+    <tr><td>Un framework, une bibliothèque, un paquet PyPI</td><td><span class="pill pill-danger">Non</span></td><td>Le code se lit et se copie&nbsp;; seul l'<a href="#skill">Agent Skill</a> s'installe</td></tr>
     <tr><td><em>La</em> bonne architecture, valable partout</td><td><span class="pill pill-danger">Non</span></td><td><a href="./cours/13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">Quand <em>ne pas</em> l'utiliser</a></td></tr>
     <tr><td>Un domaine métier riche à étudier</td><td><span class="pill pill-danger">Non</span></td><td>Le métier est un prétexte assumé &mdash; c'est <a href="./cours/ddd-strategique.html#diagnostic">discuté ici</a></td></tr>
   </tbody>
@@ -266,6 +271,46 @@ questions &mdash; <em>à qui appartient cette décision&nbsp;?</em> et
 le DDD stratégique</a> : la procédure d'atelier qu'un dépôt de code ne peut pas
 enseigner, et un diagnostic honnête des frontières de ce projet.</p>
 
+<h2 id="skill">Le cours, utilisable par un agent<a class="anchor" href="#skill" aria-label="Lien vers cette section">#</a></h2>
+
+<p>La méthode de ce dépôt est aussi distribuée comme <strong>Agent Skill</strong>,
+installable dans Claude Code, OpenAI Codex et Cursor, et utilisable sur <em>n'importe
+quel</em> projet &mdash; pas seulement celui-ci. Il ne dit pas «&nbsp;recopie ce
+Task Manager&nbsp;» : il aide un agent à décider où placer une règle, où tracer
+une frontière d'agrégat, quel port créer, quand court-circuiter le domaine en
+lecture &mdash; et, tout aussi important, quand cette architecture est
+surdimensionnée.</p>
+
+<div class="snippet" data-lang="text"><pre><code># Claude Code
+/plugin marketplace add EdwinAlkins/fastapi-hexagonal
+/plugin install fastapi-hexagonal-ddd@fastapi-hexagonal</code></pre></div>
+
+<div class="snippet" data-lang="bash"><pre><code># OpenAI Codex
+codex plugin marketplace add EdwinAlkins/fastapi-hexagonal
+codex plugin add fastapi-hexagonal-ddd@fastapi-hexagonal</code></pre></div>
+
+<div class="snippet" data-lang="text"><pre><code># Cursor
+/add-plugin https://github.com/EdwinAlkins/fastapi-hexagonal</code></pre></div>
+
+<p>Le <code>SKILL.md</code> reste court : dix fiches de <code>references/</code>
+&mdash; architecture, DDD stratégique, domaine, application, persistance,
+transactions et erreurs, lectures et écritures, événements, tests, structure de
+projet &mdash; ne sont chargées que lorsque la tâche l'exige. Le périmètre est volontairement
+restreint à l'architecture applicative : ni Kubernetes, ni observabilité, ni
+frontend, ni CI. Un skill qui essaie de tout faire se déclenche mal.</p>
+
+<div class="note"><strong>Le cours reste la source de vérité</strong>
+<p>Le skill est écrit en anglais &mdash; le déclenchement est plus fiable côté
+Claude, Codex et Cursor &mdash; alors que le cours reste en français. Il distingue
+systématiquement le <strong>principe</strong>, transférable, du <strong>choix de
+ce dépôt</strong> (UUIDv7, RabbitMQ, Valkey, PostgreSQL, import-linter,
+testcontainers) : ces derniers sont présentés comme des options défendables,
+jamais comme des lois. Toute correction de fond se fait d'abord dans le cours,
+puis se répercute dans le skill.</p></div>
+
+<p>Contenu détaillé et développement :
+<a href="https://github.com/EdwinAlkins/fastapi-hexagonal/tree/main/plugins/fastapi-hexagonal-ddd"><code>plugins/fastapi-hexagonal-ddd/</code></a>.</p>
+
 <h2 id="demarrage">Démarrage<a class="anchor" href="#demarrage" aria-label="Lien vers cette section">#</a></h2>
 
 <p>Python 3.14, <a href="https://docs.astral.sh/uv/">uv</a> et un démon Docker.
@@ -292,7 +337,7 @@ strict et les trois niveaux de tests :</p>
 make check</code></pre></div>
 
 <div class="closing">
-  <p><strong>Licence MIT. Rien à installer, tout à lire.</strong></p>
+  <p><strong>Licence MIT. Tout à lire, et une méthode à emporter.</strong></p>
   <div class="cta">
     <a class="primary" href="./cours/index.html">Commencer le cours</a>
     <a href="https://github.com/EdwinAlkins/fastapi-hexagonal">GitHub</a>

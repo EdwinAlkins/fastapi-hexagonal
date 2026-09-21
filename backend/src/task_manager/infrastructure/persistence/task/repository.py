@@ -13,7 +13,6 @@ from task_manager.domain.task.exceptions import TaskNotFound
 from task_manager.domain.task.repository import TaskRepository
 from task_manager.domain.task.value_objects import TaskId
 from task_manager.domain.user.exceptions import UserNotFound
-from task_manager.domain.user.value_objects import UserId
 from task_manager.infrastructure.persistence.task import mappers
 from task_manager.infrastructure.persistence.task.models import TaskModel
 
@@ -77,21 +76,6 @@ class SqlAlchemyTaskRepository(TaskRepository):
         if model is None:
             raise TaskNotFound(str(task_id))
         return mappers.to_domain(model)
-
-    # Déclarée avant ``list`` : évite que l'annotation ``list[Task]`` ne résolve
-    # vers la méthode ``list`` (shadowing du builtin) — cf. le port.
-    async def list_by_owner(
-        self, owner_id: UserId, *, limit: int = 100, offset: int = 0
-    ) -> list[Task]:
-        # Cœur de la relation 1→n : simple filtre sur la clé étrangère (indexée).
-        result = await self._session.execute(
-            select(TaskModel)
-            .where(TaskModel.owner_id == owner_id.value)
-            .order_by(TaskModel.created_at)
-            .limit(limit)
-            .offset(offset)
-        )
-        return [mappers.to_domain(model) for model in result.scalars().all()]
 
     async def list(self, *, limit: int = 100, offset: int = 0) -> list[Task]:
         result = await self._session.execute(

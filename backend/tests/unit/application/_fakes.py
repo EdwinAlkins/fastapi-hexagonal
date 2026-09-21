@@ -74,12 +74,6 @@ class FakeTaskRepository(TaskRepository):
         except KeyError:
             raise TaskNotFound(str(task_id)) from None
 
-    async def list_by_owner(
-        self, owner_id: UserId, *, limit: int = 100, offset: int = 0
-    ) -> list[Task]:
-        owned = [t for t in self._by_id.values() if t.owner_id == owner_id]
-        return owned[offset : offset + limit]
-
     async def list(self, *, limit: int = 100, offset: int = 0) -> list[Task]:
         return list(self._by_id.values())[offset : offset + limit]
 

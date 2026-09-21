@@ -82,9 +82,9 @@ class Task:
         qui portent sur des changements d'état et n'ont pas de sens sur un état au
         repos.
 
-        Cette méthode est délibérément plus stricte que ``mappers.to_domain`` :
-        celui-ci relit *notre* base, dont nous sommes la source de vérité, alors
-        qu'un import relit un fichier dont nous ne garantissons rien.
+        Cette méthode est l'unique porte de reconstitution, quelle que soit la
+        provenance : import, restauration ou mapper SQLAlchemy. La base n'est pas
+        dispensée des invariants intrinsèques du domaine.
         """
         if status is TaskStatus.DONE and completed_at is None:
             raise InconsistentTaskState("une tâche terminée doit porter une date de complétion")

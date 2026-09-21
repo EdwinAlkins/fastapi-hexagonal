@@ -192,9 +192,12 @@ Cinq points de discipline :
 
 ### Pas de use case : le chemin de lecture est plus court
 
-Le router appelle le port **directement**. Il n'y a rien à orchestrer : ni règle,
-ni transaction à ouvrir, ni coordination entre agrégats. Ajouter un use case ne
-ferait qu'insérer une indirection vide.
+Le router appelle le port **directement**. Il n'y a ni règle métier ni
+coordination entre agrégats à orchestrer ; ajouter un use case ne ferait
+qu'insérer une indirection vide. L'adaptateur SQL conserve malgré tout un cycle
+de vie de connexion/session et, en pratique, une transaction SQL implicite. Ce
+qui est absent, c'est une Unit of Work **métier** destinée à committer des
+modifications.
 
 ```text
 écriture :  router → use case → domaine → repository     (4 niveaux)
@@ -249,7 +252,8 @@ lecture, et l'abstraire n'apporte parfois rien.
 
 | Situation | Chemin |
 |---|---|
-| Créer, modifier, supprimer | **Agrégats**, toujours |
+| Écriture qui doit protéger des invariants métier | **Modèle qui possède ces invariants** — généralement un agrégat |
+| Écriture mécanique sans invariant métier | Chemin applicatif/infrastructure plus direct possible, avec justification explicite |
 | Charger un objet **pour le modifier** | **Agrégats** (il faut les invariants) |
 | Afficher un objet seul, quelques champs | Agrégats — le coût est négligeable |
 | Afficher une **liste** | Query service dès que la liste est longue ou fréquente |

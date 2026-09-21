@@ -201,6 +201,61 @@ modèles existent &mdash; Unit of Work explicite passé au use case, décorateur
 défendables. Ce qui compte est que la <strong>responsabilité transactionnelle soit
 située et unique</strong>, pas la forme exacte.</p>
 
+<h3 id="quand-committer--avant-ou-après-la-réponse-">Quand committer : avant ou après la réponse ?<a class="anchor" href="#quand-committer--avant-ou-après-la-réponse-" aria-label="Lien vers cette section">#</a></h3>
+
+<p>Les trois implémentations ci-dessus committent toutes dans la <em>fermeture</em>
+de la frontière. Pour la CLI et le worker, c'est sans ambiguïté : la commande ou
+le message est fini. Pour une requête HTTP, c'est un vrai embranchement.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th></th><th><strong>A. Commit avant la réponse</strong></th><th><strong>B. Commit après la réponse</strong></th></tr></thead>
+  <tbody>
+    <tr><td>Câblage typique</td><td>commit explicite dans le chemin du handler, middleware qui committe, ou dépendance dont la sortie est calée sur la fonction</td><td>dépendance <code>yield</code> dont la fermeture tourne après l'envoi</td></tr>
+    <tr><td>Une contrainte violée au commit</td><td>remonte normalement, tes handlers la mappent</td><td>tombe trop tard pour changer le statut</td></tr>
+    <tr><td>Conséquence</td><td>un 500 opaque si personne ne la traduit</td><td>une <strong>réponse positive pour une transaction annulée</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Dans FastAPI, une dépendance <code>yield</code> exécute son code de sortie
+<strong>après</strong> l'envoi de la réponse par défaut : c'est la stratégie B.
+FastAPI documente un paramètre <code>scope</code> sur <code>Depends</code> &mdash;
+<code>Depends(get_session, scope="function")</code> fait tourner la sortie juste
+après la fonction de route, donc <strong>avant</strong> l'envoi : c'est la
+stratégie A. Vérifie le comportement de la version que tu utilises plutôt que de
+le supposer, en t'appuyant sur les
+<a href="https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/">scopes FastAPI</a>.</p>
+
+<p><strong>Ce projet choisit A</strong> :
+<code>presentation/api/dependencies/session.py</code> expose
+<code>Depends(get_session, scope="function")</code>, donc la fermeture et son
+<code>commit</code> s'exécutent avant l'envoi de la réponse. Les providers qui
+dépendent de cette session doivent rester compatibles avec ce scope ; une réponse
+streamée utilise un cycle de vie séparé adapté à la durée du flux.</p>
+
+<p>Pour les commandes, garde cette séquence :</p>
+
+<div class="snippet" data-lang="text"><pre><code>POST · PUT · PATCH · DELETE
+  use case
+    └── flush là où une contrainte doit être traduite
+  COMMIT
+    └── puis construction et envoi du 2xx</code></pre></div>
+
+<p>Un <code>201</code> ou un <code>204</code> est une promesse : l'écriture est
+durable. Le <code>flush</code> ne la tient pas à lui seul, parce qu'<strong>un
+<code>flush</code> n'est pas un <code>commit</code></strong>. Il fait remonter les
+violations que tu avais anticipées, à l'endroit qui sait encore les traduire
+&mdash; c'est son rôle, et il reste utile sous les deux stratégies
+(<a href="./02-ou-vit-une-regle.html">ch. 02</a>). Mais une contrainte différée, un
+échec de sérialisation, un trigger, un timeout ou une connexion coupée échouent
+quand même au <code>COMMIT</code>, après un <code>flush</code> pourtant réussi.</p>
+
+<p>B reste défendable pour les chemins en lecture seule, et pour les écritures
+dont la confirmation est explicitement provisoire &mdash; un
+<code>202 Accepted</code> promet l'acceptation, pas la durabilité. Ce que B ne
+doit jamais être, c'est le défaut que tu n'as pas choisi.</p>
+
 <h3 id="les-limites-à-connaître">Les limites à connaître<a class="anchor" href="#les-limites-à-connaître" aria-label="Lien vers cette section">#</a></h3>
 
 <ul>
@@ -217,7 +272,20 @@ située et unique</strong>, pas la forme exacte.</p>
       La règle «&nbsp;un repository ne committe jamais&nbsp;», elle, ne bouge pas : le
       pouvoir de committer se <strong>demande</strong> par un port, il ne s'obtient pas
       par effet de bord.</li>
-  <li><strong>La fin de la dépendance doit précéder l’annonce du succès.</strong> Ici <code>Depends(get_session)</code> garde le scope <code>request</code> : son commit intervient après l’envoi de la réponse. Un <code>flush</code> anticipé permet de traduire certaines contraintes, mais <strong>ne garantit pas le commit</strong> : déconnexion et contraintes différées peuvent encore échouer. Pour les écritures HTTP, il faut une frontière qui committe avant l’envoi, par exemple une dépendance <code>scope="function"</code> avec des providers compatibles. Le streaming doit conserver une session distincte ouverte pendant le flux. Voir les <a href="https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/">scopes FastAPI</a>.</li>
+  <li><strong>Un échec au <code>commit</code> peut arriver trop tard.</strong>
+      L'endroit où vit le commit le décide. Ce projet choisit la stratégie A :
+      l'échec remonte avant l'envoi. Un <code>flush</code> explicite reste utile pour
+      déclencher et traduire une contrainte à l'endroit prévu &mdash; voir
+      <a href="#quand-committer--avant-ou-après-la-réponse-">Quand committer</a>.
+      Le streaming, lui, doit conserver une session distincte ouverte pendant le flux.</li>
+  <li><strong>Il n'existe pas d'«&nbsp;après le commit&nbsp;» dans le use case.</strong>
+      La frontière l'entoure : il rend la main <em>avant</em> le commit. Tout ce qui ne
+      doit tourner qu'une fois les données persistées se raccroche donc à la frontière,
+      ce qui suppose que celle-ci soit un objet auprès duquel on peut s'enregistrer
+      &mdash; pas une simple dépendance <code>yield</code>. Et pour un effet qui sort du
+      processus, on ne construit pas ce crochet du tout : on écrit une ligne d'outbox
+      dans la transaction. Les trois cas sont détaillés au
+      <a href="./11-cache-et-evenements.html#qui-dispatche-et-quand-">chapitre 11</a>.</li>
   <li><strong>PgBouncer en mode transaction.</strong> L'infrastructure de ce projet
       impose ses contraintes (pas de <code>LISTEN/NOTIFY</code>, pas de curseur
       <code>WITH HOLD</code>, cache de <em>prepared statements</em> désactivé).</li>
@@ -585,6 +653,10 @@ câblage reste authentique.</p>
       <strong>reçoivent</strong> leur session : c'est un <em>Unit of Work</em>
       léger, un choix parmi d'autres &mdash; mais la responsabilité doit être
       située quelque part, explicitement.</li>
+  <li><strong>Pour une commande HTTP, committe avant la réponse.</strong> Un
+      <code>2xx</code> est une promesse de durabilité, et un <code>flush</code> n'est
+      pas un <code>commit</code> : il traduit les violations anticipées, il ne garantit
+      pas que le commit final réussira.</li>
   <li>Les effets externes ne se rollback pas : c'est le <strong>dual write
       problem</strong>, et il n'a pas de solution par réordonnancement.</li>
   <li>L'<strong>outbox</strong> rend l'intention de publier transactionnelle, mais

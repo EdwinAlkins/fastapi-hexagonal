@@ -11,7 +11,9 @@ from collections.abc import AsyncIterator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from task_manager.application.task.dto import TaskDTO
 from task_manager.application.task.queries import TaskQueryPort, TaskWithOwner
+from task_manager.domain.user.value_objects import UserId
 from task_manager.infrastructure.persistence.task.models import TaskModel
 from task_manager.infrastructure.persistence.user.models import UserModel
 
@@ -25,6 +27,38 @@ class SqlAlchemyTaskQueryService(TaskQueryPort):
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def list_by_owner(
+        self, owner_id: UserId, *, limit: int = 100, offset: int = 0
+    ) -> list[TaskDTO]:
+        statement = (
+            select(
+                TaskModel.id,
+                TaskModel.owner_id,
+                TaskModel.title,
+                TaskModel.description,
+                TaskModel.status,
+                TaskModel.created_at,
+                TaskModel.completed_at,
+            )
+            .where(TaskModel.owner_id == owner_id.value)
+            .order_by(TaskModel.created_at)
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = (await self._session.execute(statement)).all()
+        return [
+            TaskDTO(
+                id=str(row.id),
+                owner_id=str(row.owner_id),
+                title=row.title,
+                description=row.description,
+                status=row.status,
+                created_at=row.created_at,
+                completed_at=row.completed_at,
+            )
+            for row in rows
+        ]
 
     async def stream_with_owner(self) -> AsyncIterator[TaskWithOwner]:
         """Une seule requête, un curseur serveur, une mémoire constante.

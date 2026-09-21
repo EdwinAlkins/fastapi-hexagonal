@@ -2,8 +2,9 @@
 
 > **TL;DR** — La couche application **orchestre** : elle enchaîne les appels, ne
 > porte pas les invariants du domaine. Un **port** appartient à la couche qui
-> *exprime le besoin* — le domaine pour les repositories, l'application pour le
-> cache, le SMTP ou le broker. Les **DTO** l'isolent des frameworks des deux côtés.
+> *exprime le besoin*. Ce template place les repositories d'agrégats dans le
+> domaine ; une application qui seule exprime ce besoin peut tout aussi bien les
+> déclarer dans `application/`. Les **DTO** isolent des frameworks des deux côtés.
 
 ## Les ports : qui déclare le besoin ?
 
@@ -34,7 +35,7 @@ C'est exactement ce que fait ce projet :
 
 | Port | Emplacement | Pourquoi là |
 |------|-------------|-------------|
-| `TaskRepository`, `UserRepository` | `domain/<ctx>/repository.py` | Persistance des agrégats : concept du modèle métier |
+| `TaskRepository`, `UserRepository` | `domain/<ctx>/repository.py` **dans ce template** | Choix DDD classique pour le cycle de vie des agrégats ; `application/` reste cohérent si les use cases portent seuls le besoin |
 | `CachePort` | `application/shared/cache.py` | Optimisation de lecture décidée par les use cases |
 | `SMTPSenderPort` | `application/shared/smtp.py` | Notification : effet applicatif, pas invariant métier |
 | `EventPublisherPort` | `application/shared/messaging.py` | Intégration : idem |
@@ -49,9 +50,10 @@ dans le domaine ». Ce serait faux ici : mettre `CachePort` dans `domain/`
 signifierait que le modèle métier des tâches a une opinion sur le cache. Il n'en
 a aucune.
 
-Le port de persistance, lui, est bien dans le domaine — et c'est là toute
-l'**inversion de dépendance** : le domaine possède l'interface, l'infrastructure
-lui obéit.
+Dans **ce template**, le port de persistance est dans le domaine : le domaine
+possède l'interface, l'infrastructure lui obéit. L'inversion de dépendance exige
+surtout que l'implémentation dépende du port ; elle n'impose pas universellement
+que tout repository vive dans `domain/`.
 
 ```python
 # domain/task/repository.py
@@ -60,8 +62,6 @@ class TaskRepository(ABC):
     async def save(self, task: Task) -> None: ...
     @abstractmethod
     async def get(self, task_id: TaskId) -> Task: ...
-    @abstractmethod
-    async def list_by_owner(self, owner_id: UserId, *, limit=100, offset=0) -> list[Task]: ...
     @abstractmethod
     async def delete(self, task_id: TaskId) -> None: ...
     @abstractmethod
@@ -110,16 +110,21 @@ rester opaque.**
 
 ### Et la pagination ? Et le tri ?
 
-`list_by_owner(owner_id, *, limit=100, offset=0)` : la pagination est dans le
-port. Est-ce une fuite technique ?
+`limit` / `offset` sont une **policy applicative** légitime. C'est justement
+pourquoi une liste paginée destinée à un endpoint vit naturellement sur un port
+de query service dans `application/`, qui retourne des read models :
 
-Non, mais la frontière mérite d'être nommée. `limit`/`offset` protègent d'un
-chargement non borné — c'est une **policy applicative** légitime
-([ch. 02](02-ou-vit-une-regle.md#et-les--policies--applicatives-)). En revanche,
-`ORDER BY created_at DESC NULLS LAST` n'a rien à faire dans une signature de
-port : c'est une décision de présentation ou d'infrastructure. Si un ordre est
-**métier** (« les tâches urgentes d'abord »), nomme-le comme tel
-(`list_urgent_first`) plutôt que d'exposer une chaîne SQL.
+```python
+class TaskQueries(ABC):
+    async def list_by_owner(
+        self, owner_id: str, *, limit: int = 100, offset: int = 0
+    ) -> list[TaskSummary]: ...
+```
+
+Le repository d'agrégat reste centré sur `get`, `save`, `delete`. Une recherche
+qui retourne des agrégats n'y entre que si l'appelant doit réellement les charger
+pour protéger des invariants. Et `ORDER BY ... NULLS LAST` n'a sa place dans
+aucune signature : si l'ordre est métier, nomme la politique en langage métier.
 
 ## Le use case : orchestrer
 
