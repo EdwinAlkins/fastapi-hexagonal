@@ -102,10 +102,7 @@ soi-même, donc celles qu'on peut rendre sûres.</p>
 </table>
 </div>
 
-<p>Le critère est simple : <strong>ce qui porte l'état exige la répartition, ce qui
-est sans état la préfère</strong>. Un pod API colocalisé avec son jumeau reste un
-inconvénient ; deux instances PostgreSQL sur le même nœud, c'est la perte du quorum
-à la première panne.</p>
+<p>Le choix <code>required</code> protège la séparation des instances ; <code>preferred</code> privilégie la facilité de placement. Cette décision dépend du stockage, de la réplication, du nombre de nœuds disponibles et des opérations de maintenance, pas seulement du caractère stateful du workload. PostgreSQL asynchrone n’exige pas le quorum de réplicas décrit pour RabbitMQ.</p>
 
 <div class="note">
   <strong>Un choix discutable, et discuté</strong>
@@ -121,14 +118,8 @@ inconvénient ; deux instances PostgreSQL sur le même nœud, c'est la perte du 
   <p>La formule « 3 nœuds » induit en erreur. Les nœuds répliquent les
   <em>métadonnées</em> du cluster ; le contenu d'une <strong>queue classique</strong>
   vit sur un seul nœud, et RabbitMQ 4 a supprimé le mécanisme historique des
-  <em>mirrored classic queues</em>. Ici, rien ne demande autre chose : perdre un nœud,
-  c'est perdre les messages qu'il portait.</p>
-  <p>Une queue réellement répliquée est une <strong>quorum queue</strong>, et son
-  type se déclare <strong>à la création</strong> &mdash; pas dans le manifeste du
-  cluster. Sur trois nœuds, elle tolère la perte d'un membre. Et elle ne suffit pas
-  seule : c'est la chaîne <em>quorum queue + publisher confirms + acquittements du
-  consommateur</em> qui rend la messagerie résiliente. Ce dépôt n'en a que le premier
-  maillon d'infrastructure, et aucun des trois réglages.</p>
+  <em>mirrored classic queues</em>. Ici, rien ne demande autre chose : la perte permanente du nœud et de son volume perd les messages ; une interruption temporaire les rend indisponibles jusqu’au retour du stockage.</p>
+  <p>Une <strong>quorum queue</strong> réplique ses messages et requiert une majorité de ses membres. Le dépôt utilise des queues classiques durables et des messages persistants. Il a déjà les ACK consumers via <code>incoming.process()</code> et les publisher confirms activés par défaut par <code>aio-pika.channel()</code>. Il manque surtout la réplication des queues et une stratégie d’idempotence. Voir <a href="https://docs.aio-pika.com/apidoc.html">aio-pika</a> et les <a href="https://www.rabbitmq.com/docs/quorum-queues">quorum queues</a>.</p>
 </div>
 
 <h2 id="hpa">HPA : deux métriques, et le plus exigeant l'emporte<a class="anchor" href="#hpa" aria-label="Lien vers cette section">#</a></h2>
@@ -217,10 +208,7 @@ spec:
 deux attend. C'est ce qui transforme une mise à jour de nœud d'un « ça devrait
 passer » en une garantie.</p>
 
-<p>Les composants gérés par opérateurs (PostgreSQL, RabbitMQ) n'ont pas de PDB dans
-ce dépôt : leurs opérateurs pilotent eux-mêmes les évictions et les bascules.
-Superposer un PDB maison risquerait d'entrer en conflit avec leur logique de
-promotion.</p>
+<p>Aucun PDB supplémentaire n’est déclaré ici pour les ressources d’opérateurs. Cela ne signifie pas qu’elles n’en ont pas : CloudNativePG gère des PDB selon sa configuration. Inspecter <code>kubectl get pdb -n task-manager</code> et la procédure de maintenance de la version installée. Un drain peut être bloqué ; l’opérateur n’est pas une garantie que toute éviction est autorisée.</p>
 
 <h2 id="scénario-de-drain">Ce qui se passe vraiment quand on draine un nœud<a class="anchor" href="#scénario-de-drain" aria-label="Lien vers cette section">#</a></h2>
 
@@ -283,7 +271,7 @@ promotion.</p>
 </svg>
 </figure>
 
-<p>Le déroulé, étape par étape :</p>
+<p>Scénario à observer, si les PDB effectifs autorisent les évictions. Un <code>drain</code> peut attendre et ne garantit pas que toutes les étapes suivantes se produisent. Ne pas désactiver les protections pour obtenir artificiellement le résultat attendu.</p>
 
 <ol>
   <li><strong>Le nœud est cordonné</strong> : plus aucun nouveau pod n'y est
@@ -329,8 +317,7 @@ promotion.</p>
       stockage objet ; ce dépôt s'en tient à des dumps logiques
       (<a href="./05-exploitation.html">ch. 05</a>). On restaure à l'instant d'un
       dump, pas à la seconde près.</li>
-  <li><strong>Les budgets de perturbation des opérateurs.</strong> PostgreSQL et
-      RabbitMQ s'en remettent à leur contrôleur.</li>
+  <li>Les budgets et procédures de maintenance des opérateurs doivent être inspectés sur le cluster ; l’absence de PDB dans ce dépôt ne signifie pas absence de PDB généré.</li>
   <li><strong>La reprise du worker après crash.</strong> Elle repose sur l'accusé de
       réception RabbitMQ, pas sur Kubernetes : un message non acquitté est redélivré
       (<a href="../cours/11-cache-et-evenements.html">cours ch. 11</a>).</li>
@@ -343,8 +330,7 @@ promotion.</p>
       <strong>combien</strong> (HPA), <strong>combien on peut retirer</strong> (PDB).</li>
   <li>Un <strong>PDB ne protège pas d'un crash</strong> : uniquement des
       perturbations volontaires.</li>
-  <li>L'état exige <code>required</code>, le sans-état se contente de
-      <code>preferred</code>.</li>
+  <li>L’anti-affinité requise est un compromis de disponibilité et de placement ; elle n’est pas obligatoire pour tout workload avec état.</li>
   <li>Le HPA calcule sur les <code>requests</code> et retient la métrique
       <strong>la plus exigeante</strong> ; sans Metrics Server il ne fait rien.</li>
   <li><code>minReplicas: 2</code> et <code>minAvailable: 1</code> se tiennent : à 1

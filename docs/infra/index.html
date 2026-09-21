@@ -51,8 +51,8 @@
 
 <div class="tldr">
   <strong>TL;DR</strong> &mdash; Un cluster Kind à 4 nœuds, PostgreSQL en haute
-  disponibilité par CloudNativePG, RabbitMQ par son opérateur officiel, neuf
-  NetworkPolicy, HPA et PDB. Tout se monte par un script. Et une contrainte
+  disponibilité par CloudNativePG, RabbitMQ par son opérateur officiel, treize
+  NetworkPolicy (neuf en ingress, quatre en egress), HPA et PDB. Tout se monte par un script. Et une contrainte
   d'infra &mdash; le pooler en mode transaction &mdash; remonte jusque dans le
   moteur SQLAlchemy de l'application.
 </div>
@@ -63,11 +63,7 @@
 suffit pas à montrer ce qui nous intéresse ici : <strong>la continuité entre les
 décisions de code et les décisions d'exploitation</strong>.</p>
 
-<p>L'exemple le plus net traverse toute la pile. Le pooler PgBouncer tourne en
-<strong>mode transaction</strong> : une connexion serveur n'est tenue que le temps
-d'une transaction. Cette décision d'infra interdit les <em>prepared statements</em>
-persistants, le <code>LISTEN/NOTIFY</code> et les <code>SET</code> de session. Elle
-a donc trois conséquences directes, à trois endroits différents :</p>
+<p>En mode transaction, PgBouncer peut affecter une connexion serveur différente à chaque transaction. Les usages liés à une session (<code>LISTEN</code>, <code>SET</code> persistant, verrous de session) demandent une connexion dédiée ou un autre mode. Les requêtes préparées au niveau protocole peuvent être prises en charge selon la configuration du pooler ; les détails sont au <a href="./01-donnees.html">chapitre 01</a>.</p>
 
 <div class="table-wrap">
 <table>
@@ -80,9 +76,7 @@ a donc trois conséquences directes, à trois endroits différents :</p>
 </table>
 </div>
 
-<p>Trois fichiers, trois couches, une seule cause. Un dépôt qui s'arrête à Compose
-ne peut pas montrer ça &mdash; et c'est précisément le genre de couplage qui se
-découvre en production quand il n'a pas été rendu explicite.</p>
+<p>Ces choix existent aussi sous Compose. Kubernetes ajoute la réplication, les changements de primaire et le dimensionnement de plusieurs poolers, ce qui oblige à vérifier ensemble les réglages des manifests et du moteur SQLAlchemy.</p>
 
 <h2 id="la-topologie">La topologie<a class="anchor" href="#la-topologie" aria-label="Lien vers cette section">#</a></h2>
 
@@ -170,7 +164,7 @@ découvre en production quand il n'a pas été rendu explicite.</p>
   <thead><tr><th>Service Compose</th><th>Équivalent Kubernetes</th><th>Ce que ça change</th></tr></thead>
   <tbody>
     <tr><td><code>postgres</code></td><td><code>Cluster</code> CNPG, 3 instances</td><td>Failover automatique, réplication en flux</td></tr>
-    <tr><td><code>pgbouncer</code></td><td><code>Pooler</code> CNPG, 2 instances</td><td>Plus de SPOF sur le pooler</td></tr>
+    <tr><td><code>pgbouncer</code></td><td><code>Pooler</code> CNPG, 2 instances</td><td>Deux processus ; la séparation des nœuds reste à vérifier</td></tr>
     <tr><td><code>rabbitmq</code></td><td><code>RabbitmqCluster</code>, 3 nœuds</td><td>Credentials générés par l'opérateur</td></tr>
     <tr><td><code>valkey</code></td><td><code>StatefulSet</code>, 1 replica</td><td>Identique (le cache est jetable)</td></tr>
     <tr><td><code>migrate</code></td><td><code>Job</code> <code>db-migrate</code></td><td>Barrière avant l'API et le worker</td></tr>
@@ -201,9 +195,9 @@ plutôt que sous un script maison.</p>
   <li><a href="./07-securite.html"><span class="num">07</span><span class="title">Sécurité</span><span class="hook">ServiceAccount sans jeton, Pod Security Admission, egress fermé</span></a></li>
 </ul>
 
-<h2 id="versions-épinglées">Versions épinglées<a class="anchor" href="#versions-épinglées" aria-label="Lien vers cette section">#</a></h2>
+<h2 id="versions-épinglées">Versions déclarées et limites de reproductibilité<a class="anchor" href="#versions-épinglées" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Tout est relevé dans <code>k8s/deploy.sh</code>, qui fait foi :</p>
+<p>Les versions proviennent de <code>k8s/deploy.sh</code> et des manifests. Elles ne sont <strong>pas toutes figées</strong> : Metrics Server utilise <code>latest</code>, plusieurs images des tags mobiles, PostgreSQL le défaut de l’opérateur, et l’image Kind n’est pas spécifiée. Un laboratoire reproductible doit enregistrer les versions et digests effectivement utilisés.</p>
 
 <div class="table-wrap">
 <table>

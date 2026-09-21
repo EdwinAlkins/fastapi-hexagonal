@@ -173,20 +173,9 @@ un seul déploiement, une seule migration qui crée les deux tables, et un
 <code>CreateTask</code> qui exige une cohérence immédiate entre les deux. Aucun
 indice ne va dans le sens de deux modèles distincts.</p>
 
-<p>Ce sont donc <strong>deux agrégats dans un seul bounded context</strong>,
-tranchés verticalement en modules. Ce n'est pas un défaut : le découpage est
-juste, il rend une extraction future presque gratuite, et le métier est trop
-simple pour justifier deux vocabulaires. Mais l'étiquette est plus ambitieuse que
-la réalité, et le savoir fait partie du sujet &mdash; c'est développé dans le
-<a href="./ddd-strategique.html">carnet de terrain</a>.</p>
+<p>Les éléments du dépôt se lisent le plus simplement comme <strong>deux agrégats dans un même bounded context</strong>, organisés en modules. C’est une interprétation du modèle, pas une conséquence automatique d’un dépôt, d’une équipe ou d’une base partagée. Une extraction demanderait de revoir les appels inter-modules, la clé étrangère, les transactions et les contrats d’échange.</p>
 
-<p>Ce qui est bien réel : la relation entre les deux tranches est minimale.
-<code>task</code> connaît <code>UserId</code> et rien d'autre &mdash; pas de
-<code>User</code> importé, pas de nom, pas d'e-mail. Et
-<code>domain/shared/</code> (bases d'exceptions) est ce qui s'approche le plus
-d'un <strong>shared kernel</strong> : quelques classes sans logique, stables par
-nature. C'est la seule forme de noyau partagé qui vieillit bien ; le jour où on y
-mettrait des règles, il faudrait le découper.</p>
+<p>Le <strong>domaine</strong> de <code>task</code> ne dépend de <code>user</code> que par <code>UserId</code>. Ce constat ne vaut pas pour toute la tranche : ses use cases importent aussi <code>UserRepository</code> et <code>UserNotFound</code>, et la persistance joint les deux tables. <code>domain/shared/</code> est ici du code commun ; un <em>shared kernel</em> DDD désigne un modèle partagé entre contextes avec une gouvernance commune, et peut contenir des règles métier.</p>
 
 <p>Il n'y a pas d'ACL non plus. Le jour où <code>user</code> deviendrait un
 service distinct, c'est précisément là qu'il faudrait en introduire un &mdash; et
@@ -296,9 +285,7 @@ de la construction, on contourne explicitement le garde-fou via
 <code>object.__setattr__</code>.</p>
 
 <p>C'est une exception assumée et localisée : elle n'a lieu qu'à la construction,
-avant que l'objet ne soit visible de qui que ce soit. Une fois
-<code>__init__</code> terminé, l'objet est bel et bien immuable pour tout le reste
-du programme.</p>
+avant que l'objet ne soit visible de qui que ce soit. Après <code>__init__</code>, les affectations ordinaires sont interdites. Ce garde-fou n’est pas une frontière de sécurité : le même contournement reste techniquement possible ailleurs.</p>
 
 <h3 id="le-gain--always-valid-model">Le gain : <em>always-valid model</em><a class="anchor" href="#le-gain--always-valid-model" aria-label="Lien vers cette section">#</a></h3>
 
@@ -347,15 +334,12 @@ du programme.</p>
 </svg>
 </figure>
 
-<p>Une fois cette barrière franchie, <strong>plus une seule ligne du domaine n'a
-besoin de re-vérifier</strong>. La question « et si le titre était vide ? » ne se
-pose plus : un <code>TaskTitle</code> vide n'existe pas. La validation est faite
-une fois, au bon endroit.</p>
+<p>Un <code>TaskTitle</code> construit normalement garantit les validations du type. Cette garantie suppose que le code utilise les types et points d’entrée prévus : les annotations Python ne contrôlent pas les affectations à l’exécution, les attributs des entités restent publics et <code>object.__setattr__</code> peut contourner un objet gelé.</p>
 
 <p>Compare :</p>
 
 <div class="snippet" data-lang="python"><pre><code>Email("bob@example.com")      # ✅ construit → forcément valide
-user.email = "n'importe quoi" # ❌ impossible : Email refuse la construction</code></pre></div>
+Email("n'importe quoi")      # ❌ construction refusée par le value object</code></pre></div>
 
 <h3 id="un-value-object-ne-fait-pas-dio">Un value object ne fait pas d'I/O<a class="anchor" href="#un-value-object-ne-fait-pas-dio" aria-label="Lien vers cette section">#</a></h3>
 

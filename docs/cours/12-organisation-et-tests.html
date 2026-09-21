@@ -64,7 +64,7 @@
 </header>
 
 <div class="tldr">
-  <strong>TL;DR</strong> &mdash; Couche et bounded context sont deux dimensions
+  <strong>TL;DR</strong> &mdash; Couche et module métier sont deux dimensions
   <strong>orthogonales</strong> : ce projet tranche verticalement à chaque couche.
   Trois niveaux de tests, pas deux : domaine pur, use cases avec doublures,
   intégration sur les moteurs réels (testcontainers).
@@ -92,11 +92,7 @@ plan.</p>
 <strong>contextes</strong> répondent à « quel morceau de métier ? ». La question
 réelle est : <em>dans quel sens découpe-t-on les dossiers en premier ?</em></p>
 
-<p>Ce projet découpe <strong>par couche d'abord, par contexte ensuite</strong>.
-Pourquoi ce sens : la règle de dépendance est vérifiée entre couches
-(import-linter), donc les couches doivent être des frontières physiques évidentes.
-À l'échelle supérieure &mdash; si <code>task</code> et <code>user</code> devenaient
-deux services &mdash; on inverserait probablement.</p>
+<p>Ce projet découpe par couche d’abord, puis par module métier (<code>task</code>, <code>user</code>). Ces deux modules ne démontrent pas deux bounded contexts : voir le <a href="./03-le-domaine.html">chapitre 03</a>. D’autres organisations de dossiers peuvent également faire vérifier leurs dépendances par import-linter.</p>
 
 <h2 id="le-découpage-vertical-concrètement">Le découpage vertical, concrètement<a class="anchor" href="#le-découpage-vertical-concrètement" aria-label="Lien vers cette section">#</a></h2>
 
@@ -107,8 +103,7 @@ v1/schemas/task.py    v1/schemas/user.py
 v1/routers/tasks.py   v1/routers/users.py
 dependencies/task.py  dependencies/user.py</code></pre></div>
 
-<p>Le bénéfice : on travaille <strong>par fonctionnalité</strong>. Ajouter un
-contexte = ajouter des dossiers, sans toucher aux fichiers existants. On lit un
+<p>Le bénéfice : on travaille <strong>par fonctionnalité</strong>. Ajouter un module crée surtout de nouveaux fichiers, mais demande aussi le câblage des routes, des dépendances et des modèles. On lit un
 contexte de bout en bout sans naviguer dans dix fichiers fourre-tout.</p>
 
 <p>Le coût, à connaître : un peu de duplication structurelle entre contextes
@@ -191,17 +186,17 @@ souvent.</p>
 
 <figure class="diagram">
 <svg viewBox="0 0 700 280" role="img" xmlns="http://www.w3.org/2000/svg"
-     aria-label="Pyramide de tests : à la base 72 tests de domaine purs, sans entrée-sortie, en microsecondes ; au milieu 10 tests de use cases sur des ports en mémoire, en millisecondes ; au sommet 29 tests d'intégration sur PostgreSQL et Valkey réels, en secondes.">
+     aria-label="Pyramide de tests : à la base des tests de domaine, sans entrée-sortie, en microsecondes ; au milieu des tests de use cases sur des ports en mémoire, en millisecondes ; au sommet des tests d’intégration sur PostgreSQL et Valkey réels, en secondes.">
   <g font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
     <polygon points="130,24 210,24 230,92 110,92" fill="var(--surface)" stroke="var(--line)"/>
     <polygon points="108,98 232,98 252,166 88,166" fill="var(--surface)" stroke="var(--line)"/>
     <polygon points="86,172 254,172 278,246 62,246" fill="var(--raised)" stroke="var(--accent)"/>
 
     <g fill="var(--ink)" font-size="17" font-weight="600" text-anchor="middle">
-      <text x="170" y="65">29</text>
-      <text x="170" y="139">10</text>
+      <text x="170" y="65">Intégration</text>
+      <text x="170" y="139">Use cases</text>
     </g>
-    <text x="170" y="216" fill="var(--accent)" font-size="17" font-weight="600" text-anchor="middle">72</text>
+    <text x="170" y="216" fill="var(--accent)" font-size="17" font-weight="600" text-anchor="middle">Domaine</text>
 
     <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3">
       <line x1="232" y1="58" x2="300" y2="58"/>
@@ -277,12 +272,7 @@ projet couvrent aussi <code>FakeCache</code>, <code>RecordingPublisher</code> et
 publication d'événement ou un échec d'envoi partiel <strong>sans Valkey, sans
 RabbitMQ, sans serveur mail</strong>.</p>
 
-<div class="note">
-  <strong>Doublures écrites à la main &gt; mocks génériques</strong>
-  Une <code>FakeTaskRepository</code> qui implémente réellement le port échoue à la
-  compilation (mypy) si le port change, là où un <code>Mock()</code> continue de
-  passer en mentant.
-</div>
+<div class="note"><strong>Les fakes rendent le contrat visible.</strong> Hériter du port détecte des méthodes abstraites manquantes à l’instanciation. Un contrôle de types peut aussi détecter des signatures incompatibles, à condition d’analyser les tests : la configuration mypy actuelle cible seulement <code>task_manager</code>. Un fake ne prouve pas non plus les garanties transactionnelles de l’adaptateur SQL.</div>
 
 <h3 id="3-lintégration--les-moteurs-réels">3. L'intégration : les moteurs réels<a class="anchor" href="#3-lintégration--les-moteurs-réels" aria-label="Lien vers cette section">#</a></h3>
 
@@ -328,9 +318,7 @@ authentiques) et surcharge deux choses seulement :</p>
       RabbitMQ réel.</li>
 </ul>
 
-<p>Le reste du câblage est celui de la production. C'est la composition root
-(<a href="./08-transactions-et-erreurs.html#4-la-composition-root">ch. 08</a>) qui
-rend cette substitution chirurgicale.</p>
+<p>Les routers, providers et handlers restent réels, mais <code>ASGITransport</code> n’exécute pas automatiquement le lifespan. La fixture configure les ressources de test et remplace le publisher. Cette suite ne valide donc ni le démarrage réel du broker, ni PgBouncer, ni Alembic, ni le worker complet. Ce sont des tests d’intégration ciblés, pas une validation de tout le déploiement.</p>
 
 <p>Deux autres choix de la conftest valent d'être notés :</p>
 
@@ -363,25 +351,17 @@ async def test_list_user_tasks_returns_only_owned_tasks(client):
 </table>
 </div>
 
-<p>Le principe : <strong>on ne teste pas deux fois la même chose</strong>. Vérifier
-« titre vide refusé » dans un test d'intégration, alors qu'un test de domaine le
-couvre déjà, ajoute des secondes de suite pour zéro information.</p>
+<p>On évite de répéter le même scénario au même niveau, mais un invariant et sa traduction HTTP sont deux propriétés différentes. Un test unitaire vérifie que le titre vide est refusé ; un test d’intégration peut utilement vérifier le statut 422, le corps de réponse et l’absence d’écriture. Le coût se juge par l’information apportée, pas par l’interdiction de tester deux fois un même chemin.</p>
 
-<p>La répartition réelle de ce projet &mdash; 72 / 10 / 29 &mdash; n'est pas un
-objectif à copier. C'est ce que produit le principe ci-dessus appliqué à ce
-métier-là. Un domaine plus riche ferait grossir la base ; un domaine anémique la
-ferait disparaître, ce qui serait le vrai signal d'alarme.</p>
+<p>Les effectifs évoluent : utiliser <code>uv run pytest --collect-only -q</code> depuis <code>backend/</code> pour les retrouver. La review du 14 septembre 2026 a exécuté <strong>107 tests unitaires</strong> avec succès. Ce nombre n’est pas une cible pédagogique ; le choix des risques couverts importe davantage.</p>
 
 <h2 id="les-garde-fous-automatisés">Les garde-fous automatisés<a class="anchor" href="#les-garde-fous-automatisés" aria-label="Lien vers cette section">#</a></h2>
 
 <div class="snippet" data-lang="bash"><pre><code>make lint     # ruff + import-linter + mypy strict
 make test     # les trois niveaux
-make check    # = lint + test, reproduit la CI en local</code></pre></div>
+make check    # = lint + test, contrôles locaux complets</code></pre></div>
 
-<p><code>make imports</code> (import-linter) est le test d'architecture du
-<a href="./01-regle-de-dependance.html#comment-on-la-vérifie-ici">chapitre 01</a> :
-il tourne en pre-commit et en CI. Une règle d'architecture non vérifiée se dégrade
-en quelques mois &mdash; celle-ci ne peut pas.</p>
+<p><code>make imports</code> exécute les deux contrats d’architecture. Les hooks pre-commit les lancent s’ils sont installés ; le workflow GitHub actuel publie uniquement le site. <strong>La CI backend reste à ajouter</strong> : <code>make check</code> n’est pas lancé automatiquement par GitHub.</p>
 
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 

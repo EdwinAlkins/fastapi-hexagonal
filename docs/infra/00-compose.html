@@ -61,11 +61,14 @@
 <div class="snippet" data-lang="bash"><pre><code>cp .env.template .env
 docker compose up --build        # → http://localhost:8000/docs</code></pre></div>
 
-<p>Pour ne travailler que sur le backend, trois services suffisent &mdash; l'API
-tourne alors en local avec le rechargement à chaud :</p>
+<p>Pour faire tourner l’API sur l’hôte, démarrer aussi RabbitMQ : le lifespan de l’API s’y connecte. Appliquer d’abord les migrations en connexion directe via le service <code>migrate</code> :</p>
 
-<div class="snippet" data-lang="bash"><pre><code>docker compose up -d postgres pgbouncer valkey
-cd backend &amp;&amp; make run</code></pre></div>
+<div class="snippet" data-lang="bash"><pre><code>cp .env.template .env           # une seule fois ; adapter les valeurs
+docker compose up -d postgres pgbouncer valkey rabbitmq mailpit
+docker compose run --rm migrate
+cd backend
+uv sync
+make run</code></pre></div>
 
 <div class="table-wrap">
 <table>
@@ -81,7 +84,7 @@ cd backend &amp;&amp; make run</code></pre></div>
     <tr><td><code>migrate</code></td><td>image du backend</td><td><code>alembic upgrade head</code>, puis s'arrête</td></tr>
     <tr><td><code>api</code></td><td>image du backend</td><td>Gunicorn / Uvicorn</td></tr>
     <tr><td><code>worker</code></td><td>image du backend</td><td>Consumer RabbitMQ</td></tr>
-    <tr><td><code>frontend</code></td><td>image du frontend</td><td>Preact + nginx</td></tr>
+    <tr><td><code>frontend</code></td><td>image du frontend</td><td>Preact + serveur Vite (cible dev)</td></tr>
   </tbody>
 </table>
 </div>
@@ -113,11 +116,7 @@ valkey:
   healthcheck:
     test: ["CMD", "valkey-cli", "ping"]</code></pre></div>
 
-<p>Chaque sonde interroge le service <strong>dans sa propre langue</strong> :
-<code>pg_isready</code> pour PostgreSQL, <code>rabbitmq-diagnostics ping</code> pour
-le broker, <code>valkey-cli ping</code> pour le cache. Pas de
-<code>curl</code> générique, pas de test de port TCP &mdash; un port ouvert ne
-signifie pas qu'une base accepte des requêtes.</p>
+<p>Ces sondes ont une portée limitée : <code>pg_isready</code> vérifie l’acceptation des connexions, pas le schéma ni les droits applicatifs ; <code>rabbitmq-diagnostics ping</code> vérifie le processus Erlang et ne prouve pas qu’une file est disponible. Les dépendances Compose sont vérifiées au démarrage ; une panne ultérieure ne provoque pas automatiquement le redémarrage des services dépendants. Voir <a href="https://docs.docker.com/compose/how-tos/startup-order/">l’ordre de démarrage Compose</a>.</p>
 
 <h3 id="depends_on-avec-condition">2. <code>depends_on</code> avec condition<a class="anchor" href="#depends_on-avec-condition" aria-label="Lien vers cette section">#</a></h3>
 

@@ -99,16 +99,12 @@ explicite.</p>
   <tbody>
     <tr><td>Placement</td><td>Le scheduler essaie de répartir</td><td>Une instance par nœud, garanti</td></tr>
     <tr><td>Si moins de 3 nœuds</td><td>Tout se schedule quand même</td><td>Une instance reste <code>Pending</code></td></tr>
-    <tr><td>Perte d'un nœud</td><td>Peut emporter 2 instances sur 3 &mdash; plus de quorum</td><td>N'emporte qu'une instance</td></tr>
+    <tr><td>Perte d'un nœud</td><td>Peut emporter 2 instances sur 3 &mdash; moins de réplicas disponibles</td><td>N'emporte qu'une instance</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>Le mode strict échange de la souplesse de placement contre une
-<strong>garantie</strong> : la perte d'un nœud laisse deux instances debout, donc
-un failover possible. C'est exactement ce que le cluster à 3 workers rend testable
-&mdash; et la raison pour laquelle <code>kind-config.yaml</code> en déclare trois
-et pas un.</p>
+<p>L’anti-affinité stricte évite de perdre plusieurs instances avec un seul nœud. Le failover dépend aussi de la disponibilité du contrôleur, du contrôle Kubernetes et d’un réplica suffisamment à jour. <strong>PostgreSQL en réplication asynchrone ne requiert pas un quorum de deux instances pour servir</strong> : ne pas le confondre avec le consensus d’une quorum queue RabbitMQ.</p>
 
 <div class="note">
   <strong>Réplication asynchrone, par défaut &mdash; et les deux chiffres qui vont avec</strong>
@@ -151,7 +147,7 @@ metadata:
 spec:
   cluster:
     name: task-manager-db
-  instances: 2                    # PgBouncer est stateless → pas de SPOF
+  instances: 2                    # deux processus ; placement sur les nœuds à contrôler
   type: rw
   pgbouncer:
     poolMode: transaction
@@ -179,10 +175,7 @@ spec:
 
 <h2 id="ce-que-le-mode-transaction-impose-au-code">Ce que le mode transaction impose au code<a class="anchor" href="#ce-que-le-mode-transaction-impose-au-code" aria-label="Lien vers cette section">#</a></h2>
 
-<p>En mode transaction, une connexion serveur n'est prêtée à un client que le temps
-d'une transaction, puis rendue au pool. Plusieurs clients sont donc
-<strong>multiplexés</strong> sur la même connexion PostgreSQL. Trois conséquences,
-à trois endroits :</p>
+<p>Le pooler prête une connexion serveur pendant une transaction. Une nouvelle transaction peut utiliser une autre connexion ; la continuité de session n’est donc pas garantie.</p>
 
 <figure class="diagram">
 <svg viewBox="0 0 700 250" role="img" xmlns="http://www.w3.org/2000/svg"
@@ -240,9 +233,7 @@ d'une transaction, puis rendue au pool. Plusieurs clients sont donc
 - name: APP_DATABASE_URL
   value: "postgresql+asyncpg://task_manager:$(DB_PASSWORD)@task-manager-pooler:5432/task_manager?prepared_statement_cache_size=0"</code></pre></div>
 
-<p>Un énoncé préparé est attaché à une <em>connexion serveur</em>. Comme celle-ci
-change d'un appel à l'autre, le cache pointerait vers des énoncés qui n'existent
-plus sur la connexion courante.</p>
+<p>Le dépôt désactive le cache de requêtes préparées du dialecte SQLAlchemy/asyncpg avec <code>prepared_statement_cache_size=0</code>. Cela ne désactive pas les préparations elles-mêmes. PgBouncer sait gérer les prepared statements nommés au niveau protocole depuis 1.21 si <code>max_prepared_statements</code> est non nul ; <code>PREPARE</code>/<code>EXECUTE</code> SQL restent un autre cas. Voir la <a href="https://www.pgbouncer.org/faq.html">FAQ PgBouncer</a>.</p>
 
 <h3 id="2-un-nom-dénoncé-unique">2. Un nom d'énoncé unique, et <code>pool_pre_ping</code><a class="anchor" href="#2-un-nom-dénoncé-unique" aria-label="Lien vers cette section">#</a></h3>
 
@@ -261,33 +252,18 @@ return create_async_engine(
       Deux clients multiplexés sur la même connexion serveur choisiraient le même
       nom et déclencheraient un <code>DuplicatePreparedStatementError</code>. Un
       UUID par énoncé supprime la collision.</li>
-  <li><strong><code>pool_pre_ping</code></strong> &mdash; une connexion que le
-      pooler a recyclée sous nos pieds est détectée et remplacée avant usage,
-      plutôt que de faire échouer la requête.</li>
+  <li><code>pool_pre_ping</code> teste une connexion à sa sortie du pool SQLAlchemy et remplace celles déjà mortes. Il ne protège ni une transaction en cours ni un arrêt survenant après le ping, et n’est pas spécifique à PgBouncer.</li>
 </ul>
 
-<div class="note">
-  <strong>Ces trois réglages forment un tout</strong>
-  Ils se changent ensemble ou pas du tout. Retirer l'un des trois en gardant les
-  autres produit des erreurs intermittentes, sous charge seulement &mdash; le pire
-  profil de bug. C'est pour ça qu'ils sont documentés au même endroit dans le code
-  et ici.
-</div>
+<div class="note"><strong>Des réglages à tester, pas une loi universelle.</strong> Le cache désactivé et les noms uniques correspondent au choix de ce dépôt. Leur nécessité dépend de la version du pooler et de son suivi des prepared statements. <code>pool_pre_ping</code> répond à un autre problème. Vérifier les paramètres effectifs et tester le chemin SQLAlchemy → PgBouncer → PostgreSQL ; les tests d’intégration actuels visent PostgreSQL directement.</div>
 
 <h2 id="les-migrations-contournent-le-pooler">Les migrations contournent le pooler<a class="anchor" href="#les-migrations-contournent-le-pooler" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Contrairement à ce qu'on lit souvent, ce n'est pas que « le DDL ne passe pas en
-transaction pooling » : PostgreSQL a un DDL transactionnel, et l'essentiel d'une
-migration passerait très bien par le pooler. Ce qu'Alembic exige, c'est une
-<strong>session stable et prévisible</strong>, que le mode transaction ne garantit
-pas :</p>
+<p>Le DDL PostgreSQL est largement transactionnel et peut passer par PgBouncer. Une connexion directe au primaire facilite cependant la maîtrise de la session de migration et de ses opérations hors transaction. C’est le choix du dépôt, pas une obligation générale d’Alembic.</p>
 
 <ul>
-  <li>le verrou consultatif qu'Alembic pose pour sérialiser les migrations est
-      <strong>de session</strong> : en mode transaction, la connexion serveur change
-      sous ses pieds et le verrou ne protège plus rien ;</li>
-  <li><code>CREATE INDEX CONCURRENTLY</code> et <code>ALTER TYPE … ADD VALUE</code>
-      ne peuvent pas s'exécuter à l'intérieur d'une transaction ;</li>
+  <li><strong>Alembic ne prend pas automatiquement de verrou consultatif dans ce dépôt.</strong> <code>alembic/env.py</code> n’en crée aucun. La connexion directe ne sérialise donc pas deux migrateurs : il faut un verrou explicite ou une exclusion au niveau du déploiement si ce cas est possible.</li>
+  <li><code>CREATE INDEX CONCURRENTLY</code> doit être exécuté hors bloc transactionnel. Dans PostgreSQL 17, <code>ALTER TYPE … ADD VALUE</code> peut être exécuté dans une transaction, mais la nouvelle valeur ne peut être utilisée qu’après commit. Voir <a href="https://www.postgresql.org/docs/17/sql-altertype.html">ALTER TYPE</a>.</li>
   <li>les <code>SET</code> de session (<code>lock_timeout</code>,
       <code>search_path</code>) ne sont pas garantis d'une requête à la suivante ;</li>
   <li>une migration doit viser le <strong>primaire</strong>, explicitement.</li>
@@ -312,9 +288,7 @@ pas :</p>
       mécanismes existent dans le code
       (<a href="../cours/12-organisation-et-tests.html">ch. 12</a>) ; en cluster,
       un seul a le droit de s'exécuter.</li>
-  <li><strong>Le Job est une barrière.</strong> <code>deploy.sh</code> attend
-      <code>--for=condition=complete</code> avant d'appliquer l'API et le worker :
-      aucun pod applicatif ne démarre sur un schéma absent ou partiel.</li>
+  <li>Le script attend le Job avant d’appliquer les workloads au premier déploiement. Sur un cluster existant, les pods tournent déjà et un Job <code>Completed</code> ne se relance pas par un simple <code>apply</code>. Une mise à jour exige une nouvelle exécution des migrations et un schéma compatible avec les versions encore actives.</li>
 </ul>
 
 <div class="snippet" data-lang="bash"><pre><code># k8s/deploy.sh — la barrière
@@ -354,8 +328,7 @@ contient que ce qui n'est pas généré &mdash; et ses valeurs sont des
   <li><code>default_pool_size</code> se compte <strong>par pod et par couple
       (utilisateur, base)</strong> : c'est la somme qui doit rester sous le
       <code>max_connections</code> de PostgreSQL, pas le chiffre du manifeste.</li>
-  <li>Le mode transaction impose <strong>trois réglages solidaires</strong>, dans
-      trois fichiers de trois couches différentes.</li>
+  <li>Les contraintes du mode transaction dépendent des fonctionnalités utilisées et de la configuration réelle du pooler ; vérifier ensemble le client, le pooler et le serveur.</li>
   <li>Les migrations <strong>contournent le pooler</strong> et forment une
       <strong>barrière</strong> avant tout pod applicatif.</li>
   <li>Les mots de passe sont <strong>générés par les opérateurs</strong>, jamais

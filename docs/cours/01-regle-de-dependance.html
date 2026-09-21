@@ -165,12 +165,7 @@ forme de la prise.</p>
 </svg>
 </figure>
 
-<p>Les flèches pleines sont les <code>import</code>. La flèche pointillée rappelle
-que les adaptateurs driven <strong>dépendent</strong> des ports (ils les
-implémentent) : le sens de la dépendance est inversé par rapport au sens de
-l'appel. À l'exécution, l'application appelle la base de données ; à la
-compilation, c'est la base de données qui dépend de l'interface définie plus au
-centre.</p>
+<p>Les flèches représentent les <code>import</code>. À l’exécution, le use case appelle un adaptateur à travers son port. Dans le code, c’est <strong>l’adaptateur de persistance</strong> qui dépend de l’interface du cœur ; le serveur PostgreSQL ne dépend évidemment pas de notre code Python.</p>
 
 <h2 id="les-quatre-couches-de-ce-projet">Les quatre couches de ce projet<a class="anchor" href="#les-quatre-couches-de-ce-projet" aria-label="Lien vers cette section">#</a></h2>
 
@@ -274,14 +269,13 @@ task_manager.domain is not allowed to import sqlalchemy:
 
 -   task_manager.domain.task.entities -&gt; sqlalchemy (l.10)</code></pre></div>
 
-<p>Il tourne dans <code>make lint</code>, en pre-commit et en CI. <strong>C'est là
-que la règle de dépendance cesse d'être une intention.</strong></p>
+<p><code>import-linter</code> tourne dans <code>make lint</code> et dans les hooks pre-commit lorsqu’ils sont installés. Le seul workflow GitHub versionné publie le site ; <strong>aucune CI backend ne lance encore ces contrôles</strong>. Les brancher en CI reste nécessaire pour protéger les contributions qui contournent les hooks locaux.</p>
 
 <div class="table-wrap">
 <table class="table-principe">
   <thead><tr><th>Concept</th><th>Ce que dit le principe</th><th>Ce que fait ce projet</th></tr></thead>
   <tbody>
-    <tr><td>Vérification de l'archi</td><td>La règle doit être testable, pas seulement documentée</td><td>import-linter (2 contrats) en pre-commit + CI</td></tr>
+    <tr><td>Vérification de l'archi</td><td>La règle doit être testable, pas seulement documentée</td><td>import-linter (2 contrats) en make lint + hooks pre-commit</td></tr>
     <tr><td>Nombre de couches</td><td>Non prescrit (dedans / dehors)</td><td>4 couches, héritées de la Clean Architecture</td></tr>
   </tbody>
 </table>
@@ -291,7 +285,7 @@ que la règle de dépendance cesse d'être une intention.</strong></p>
 
 <ul>
   <li><strong>Testabilité</strong> &mdash; le domaine se teste sans base ni HTTP,
-      en millisecondes (72 tests unitaires de domaine dans ce projet, quasi
+      en millisecondes (les tests de <code>tests/unit/domain/</code>, quasi
       instantanés).</li>
   <li><strong>Remplaçabilité</strong> &mdash; ce template est passé de SQLite à
       PostgreSQL : seuls la config, le moteur SQLAlchemy et les tests ont changé.

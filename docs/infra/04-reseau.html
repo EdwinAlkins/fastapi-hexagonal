@@ -202,11 +202,7 @@ est d'<strong>enseigner la segmentation</strong>, la lisibilité l'emporte.</p>
 </table>
 </div>
 
-<p><code>k8s/network-policies.yaml</code> en contient <strong>treize</strong> :
-ces neuf-là, plus les quatre politiques d'egress ajoutées au
-<a href="./07-securite.html#fermer-legress">chapitre 07</a>. Les NetworkPolicy
-étant additives, chacune se lit isolément &mdash; une politique d'ingress par
-cible, une politique d'egress par source.</p>
+<p>Le fichier contient treize politiques : neuf pour l’ingress, quatre pour l’egress. Les autorisations de toutes les politiques sélectionnant un pod sont réunies ; il faut donc lire <strong>leur union</strong>, pas chaque fichier isolément. Pour une connexion, l’egress de la source et l’ingress de la destination doivent tous deux l’autoriser.</p>
 
 <p>Trois détails que la lecture rapide manque :</p>
 
@@ -228,8 +224,7 @@ cible, une politique d'egress par source.</p>
 <h2 id="le-cas-frontend--postgres">Le cas qui porte la leçon : frontend → postgres<a class="anchor" href="#le-cas-frontend--postgres" aria-label="Lien vers cette section">#</a></h2>
 
 <p>C'est le seul refus que le dépôt met en avant, parce qu'il correspond à un vrai
-scénario d'attaque : un frontend compromis &mdash; XSS, dépendance npm vérolée,
-image altérée &mdash; tenterait de joindre la base directement.</p>
+scénario d'attaque : un frontend compromis &mdash; exécution de code dans le conteneur nginx, image altérée &mdash; tenterait de joindre la base directement.</p>
 
 <div class="snippet" data-lang="yaml"><pre><code># k8s/network-policies.yaml
 metadata: { name: allow-postgres }
@@ -251,14 +246,7 @@ plutôt que l'affirmation, tester une politique réseau est la moindre des chose
 une <code>NetworkPolicy</code> non appliquée par le CNI ne produit
 <strong>aucune erreur</strong>, juste une fausse impression de sécurité.</p>
 
-<div class="warn">
-  <strong>Toutes les implémentations ne les appliquent pas</strong>
-  Une <code>NetworkPolicy</code> n'est qu'une intention : c'est le plugin réseau qui
-  la fait respecter. Certains CNI les ignorent purement et simplement. Ici c'est
-  <strong>kindnet</strong>, le CNI par défaut de Kind, et le comportement a été
-  vérifié. Sur un autre cluster, la première chose à faire est de reproduire ce
-  test.
-</div>
+<div class="note"><strong>Vérifier le moteur de politiques.</strong> Kind fournit un support des NetworkPolicy depuis <a href="https://github.com/kubernetes-sigs/kind/releases/tag/v0.24.0">la version 0.24, via kube-network-policies</a>. L’attribuer au seul kindnetd est imprécis. Vérifier la version et les composants installés, puis les connexions autorisées et refusées. Les résultats historiques du cours ne remplacent pas ces tests sur son propre cluster.</div>
 
 <h2 id="la-gateway">La Gateway : quatre objets là où l'Ingress n'en avait qu'un<a class="anchor" href="#la-gateway" aria-label="Lien vers cette section">#</a></h2>
 
@@ -290,11 +278,7 @@ spec:
     allowedRoutes:
       namespaces: { from: Same }</code></pre></div>
 
-<p><code>allowedRoutes</code> n'a pas d'équivalent en <code>Ingress</code> : seules
-les routes de <code>task-manager</code> peuvent se raccrocher à cette Gateway.
-Avec un <code>Ingress</code>, n'importe quel namespace pouvait revendiquer
-n'importe quel hostname &mdash; un vrai problème de multi-tenance, réglé ici par
-le modèle et non par un contrôleur d'admission.</p>
+<p><code>allowedRoutes</code> limite ici l’attachement aux routes du namespace de la Gateway. Cela ne réserve pas globalement un hostname : une autre Gateway peut encore déclarer le même nom. Le contrôle multitenant dépend aussi des droits de création des Gateways, des classes autorisées et, si nécessaire, de règles d’admission.</p>
 
 <div class="snippet" data-lang="yaml"><pre><code># k8s/httproutes.yaml — l'application, sans hostname : elle attrape tout
 spec:
@@ -311,7 +295,7 @@ spec:
   <p>Dans un <code>Ingress</code>, <code>host</code> était un attribut de la
   <em>règle</em> : un seul objet portait les quatre consoles. Dans une
   <code>HTTPRoute</code>, <code>hostnames</code> est un attribut de la
-  <strong>route</strong>. Il faut donc <strong>une route par hostname</strong> —
+  <strong>route</strong>. Il faut donc <strong>une route par groupe de règles ; plusieurs hostnames peuvent partager une route</strong> —
   cinq objets au lieu de deux.</p>
   <p>C'est plus verbeux, et c'est délibéré : chaque route peut vivre dans son
   namespace, appartenir à une équipe différente, et être supprimée sans toucher
@@ -412,17 +396,13 @@ qui allaient avec.</p>
   containerPort 80</code> : rien ne répondra sur <code>http://localhost</code>, et
   aucun <code>kubectl apply</code> n'y changera quoi que ce soit.
   <code>deploy.sh</code> détecte le cas et s'arrête plutôt que de laisser chercher.
-  Le remède est de recréer le cluster : <code>./k8s/clean.sh &amp;&amp;
+  Après sauvegarde des données à conserver, le remède est de recréer le cluster (opération destructive) : <code>./k8s/clean.sh &amp;&amp;
   ./k8s/deploy.sh</code>.</p>
 </div>
 
 <h3 id="ingress-lapi-historique">Ingress, l'API historique<a class="anchor" href="#ingress-lapi-historique" aria-label="Lien vers cette section">#</a></h3>
 
-<p>Ce dépôt utilisait un <code>Ingress</code> jusqu'en août 2026. Le remplacement
-n'est pas une question de goût : le projet <strong>Ingress NGINX a été retiré le
-24 mars 2026</strong> &mdash; plus de releases, plus de correctifs de sécurité,
-plus de maintenance. Garder un contrôleur non maintenu comme unique point d'entrée
-d'un cluster n'était plus défendable, même dans un labo.</p>
+<p>Le dépôt a remplacé Ingress NGINX par Envoy Gateway. Le projet communautaire <strong>Ingress NGINX</strong> a annoncé sa retraite pour mars 2026 : voir la <a href="https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/">communication officielle Kubernetes</a>. Cela ne retire ni l’API Ingress de Kubernetes, ni tous les autres contrôleurs basés sur nginx.</p>
 
 <div class="snippet" data-lang="yaml"><pre><code># l'ancien k8s/ingress.yaml, pour comparaison
 spec:
@@ -467,12 +447,7 @@ exercice courant. Les correspondances utiles :</p>
   - port: 80          # ce que la HTTPRoute appelle
     targetPort: 8080  # ce que nginx-unprivileged écoute</code></pre></div>
 
-<p>Le décalage vient du durcissement
-(<a href="./02-workloads.html#durcissement">ch. 02</a>) : un processus non-root ne
-peut pas se lier à un port inférieur à 1024. L'image écoute donc sur 8080, et le
-Service rétablit le 80 attendu. La <code>NetworkPolicy</code> du frontend cible
-bien <strong>8080</strong>, le port du conteneur &mdash; c'est une erreur classique
-que d'y écrire 80.</p>
+<p>L’image nginx-unprivileged écoute sur 8080 et le Service expose le port 80. Un processus non-root peut parfois utiliser un port inférieur à 1024 selon les capabilities et les paramètres du noyau ; 8080 évite de dépendre de cette configuration. La NetworkPolicy cible le port de destination du pod, donc 8080 ici.</p>
 
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 

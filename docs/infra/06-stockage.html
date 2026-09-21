@@ -131,8 +131,7 @@ standard   true     rancher.io/local-path   WaitForFirstConsumer   Delete    &lt
 </table>
 </div>
 
-<p>Les cinq volumes du namespace &mdash; trois instances PostgreSQL, un nœud
-RabbitMQ ayant déjà démarré, et Valkey &mdash; sont donc cinq répertoires :</p>
+<p>À convergence, les manifests demandent <strong>sept PVC</strong> : trois PostgreSQL, trois RabbitMQ et un Valkey. L’extrait suivant est un relevé partiel ancien, où un seul nœud RabbitMQ avait créé son volume ; il ne décrit pas un cluster entièrement prêt.</p>
 
 <div class="snippet" data-lang="console"><pre><code>$ kubectl get pv -o json | ...
 task-manager-db-1              1Gi  Delete  noeud=task-manager-worker3
@@ -144,10 +143,7 @@ persistence-rabbitmq-server-2  1Gi  Delete  noeud=task-manager-worker</code></pr
 
 <h3 id="waitforfirstconsumer"><code>WaitForFirstConsumer</code> : l'ordre compte<a class="anchor" href="#waitforfirstconsumer" aria-label="Lien vers cette section">#</a></h3>
 
-<p>Le mode par défaut, <code>Immediate</code>, créerait le volume dès que le PVC
-apparaît &mdash; donc avant de savoir où le pod ira. Avec un stockage local, c'est
-une impasse garantie : le volume naît sur un nœud, le scheduler en choisit un autre,
-et le pod reste bloqué.</p>
+<p><code>Immediate</code> lie ou provisionne le volume dès la demande. Avec du stockage local, il peut imposer un nœud incompatible avec les autres contraintes du pod. Ce n’est pas un échec systématique : le scheduler tient aussi compte de l’affinité du PV. <code>WaitForFirstConsumer</code> permet de choisir conjointement le placement et le stockage.</p>
 
 <p><code>WaitForFirstConsumer</code> inverse l'ordre : le scheduler place le pod
 d'abord, en tenant compte de l'anti-affinité et des ressources, et le provisionneur
@@ -197,8 +193,8 @@ pas.</strong></p>
   <thead><tr><th>Ce qui est répliqué</th><th>Par quoi</th><th>Ce qui se passe si un nœud meurt</th></tr></thead>
   <tbody>
     <tr><td>Les <strong>données</strong> PostgreSQL</td><td>la réplication en flux (WAL) de PostgreSQL, pilotée par CloudNativePG</td><td>Un réplica est promu, la donnée survit &mdash; à la fenêtre de réplication près (<a href="./01-donnees.html#pourquoi-un-opérateur">RPO</a>)</td></tr>
-    <tr><td>Le <strong>volume</strong></td><td>rien</td><td>Le répertoire disparaît avec le nœud</td></tr>
-    <tr><td>Les <strong>messages</strong> RabbitMQ</td><td>rien (queues classiques, cf. <a href="./03-resilience.html#anti-affinité">ch. 03</a>)</td><td>Les messages portés par ce nœud sont perdus</td></tr>
+    <tr><td>Le <strong>volume</strong></td><td>rien</td><td>Le répertoire disparaît à la suppression du conteneur Kind ; une panne temporaire le rend inaccessible</td></tr>
+    <tr><td>Les <strong>messages</strong> RabbitMQ</td><td>rien (queues classiques, cf. <a href="./03-resilience.html#anti-affinité">ch. 03</a>)</td><td>Indisponibles tant que le nœud est arrêté ; perdus si son volume est détruit</td></tr>
     <tr><td>Le <strong>cache</strong> Valkey</td><td>rien</td><td>Sans importance : le cache est jetable</td></tr>
   </tbody>
 </table>
@@ -218,8 +214,8 @@ PostgreSQL rend cette perte supportable.</p>
   <thead><tr><th>Manque ici</th><th>Ce que ça apporte</th></tr></thead>
   <tbody>
     <tr><td>Un pilote <strong>CSI</strong> avec stockage réseau</td><td>Le volume se détache d'un nœud et se rattache à un autre : le repli redevient possible</td></tr>
-    <tr><td><code>allowVolumeExpansion: true</code></td><td>Agrandir un PVC sans recréer la base. Ici, 1 Gi est un plafond dur</td></tr>
-    <tr><td>Une <code>VolumeSnapshotClass</code></td><td>Des snapshots cohérents, et une restauration en minutes plutôt qu'en heures</td></tr>
+    <tr><td><code>allowVolumeExpansion: true</code></td><td>Agrandir un PVC sans recréer la base. Le PVC demande 1 Gi ; local-path n’en fait pas un quota disque dur</td></tr>
+    <tr><td>Une <code>VolumeSnapshotClass</code></td><td>Des snapshots si le pilote les supporte ; leur cohérence applicative et leur durée de restauration doivent être vérifiées</td></tr>
     <tr><td><code>reclaimPolicy: Retain</code></td><td>Un <code>kubectl delete pvc</code> malheureux ne détruit plus les données</td></tr>
     <tr><td>Des <strong>zones</strong> de disponibilité</td><td>Répartir les volumes sur des défaillances vraiment indépendantes &mdash; ce que Kind ne peut pas simuler</td></tr>
   </tbody>
@@ -247,8 +243,7 @@ PostgreSQL rend cette perte supportable.</p>
   <li>C'est la <strong>seconde</strong> raison pour laquelle une instance évincée
       reste <code>Pending</code> au drain &mdash; l'anti-affinité n'est que la
       première.</li>
-  <li><code>WaitForFirstConsumer</code> fait planifier le pod avant de créer le
-      volume : sans lui, stockage local et anti-affinité seraient incompatibles.</li>
+  <li><code>WaitForFirstConsumer</code> coordonne le placement et le provisionnement ; il évite une affectation de volume trop précoce qui pourrait bloquer le pod.</li>
   <li><strong>HA du calcul ≠ HA du stockage.</strong> Ici, ce sont les WAL de
       PostgreSQL qui répliquent, pas le disque. RabbitMQ, lui, ne réplique rien.</li>
   <li>Ni expansion, ni snapshot : deux propriétés qu'on croit acquises et qui sont

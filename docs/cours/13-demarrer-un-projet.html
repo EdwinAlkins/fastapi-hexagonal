@@ -192,8 +192,7 @@ niveaux. Pour un use case seul, <code>RenameUser</code> est l'exemple minimal
       mémoire).</li>
   <li>Chaque port est dans la couche qui <strong>exprime le besoin</strong>.</li>
   <li>Tout cache a un <strong>contrat d'invalidation écrit</strong>.</li>
-  <li>Un nouveau contexte = de <strong>nouveaux fichiers</strong>, pas des
-      modifications dispersées.</li>
+  <li>Un nouveau module ajoute sa tranche et un câblage explicite ; son autonomie doit être vérifiée, pas déduite des noms de dossiers.</li>
 </ul>
 
 <h2 id="les-pièges-les-plus-fréquents">Les pièges les plus fréquents<a class="anchor" href="#les-pièges-les-plus-fréquents" aria-label="Lien vers cette section">#</a></h2>
@@ -215,7 +214,7 @@ niveaux. Pour un use case seul, <code>RenameUser</code> est l'exemple minimal
       déguisé.</li>
   <li><strong>Ranger toutes les erreurs sous <code>DomainError</code></strong> : une
       panne de broker n'est pas un problème métier.</li>
-  <li><strong>Confondre query service et CQRS</strong>
+  <li><strong>Croire que CQRS impose des bases séparées</strong>
       (<a href="./09-lectures-et-query-services.html#et-cqrs-alors-">ch. 09</a>).</li>
   <li><strong>Sur-découper</strong> : appliquer un pattern (façade, sous-dossiers)
       partout par réflexe. Le découpage doit servir la lisibilité, cas par cas.</li>
@@ -268,7 +267,7 @@ besoin du 4.</p>
 
 <ul>
   <li><strong>Domain-Driven Design</strong> (Eric Evans) &mdash; le livre fondateur.
-      Le DDD stratégique (première partie) est plus important que les patterns
+      Le DDD stratégique (partie IV) est plus important que les patterns
       tactiques, et bien moins lu.</li>
   <li><strong>Implementing Domain-Driven Design</strong> (Vaughn Vernon) &mdash;
       plus pratique ; c'est de là que vient « référencer les agrégats par

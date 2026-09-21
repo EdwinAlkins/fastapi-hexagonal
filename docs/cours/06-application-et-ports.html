@@ -185,15 +185,13 @@ Non &mdash; les deux ports n'ont pas la même nature de contrat.</p>
   <tbody>
     <tr><td>Qui lit la donnée</td><td><strong>un autre process</strong> (le worker)</td><td>le même use case, plus tard</td></tr>
     <tr><td>Durée de vie</td><td>contrat public, versionné</td><td>éphémère, jetable</td></tr>
-    <tr><td>Changer la forme coûte</td><td>coordonner deux déploiements</td><td>rien : au pire un cache miss</td></tr>
-    <tr><td>Typage utile ?</td><td><strong>oui</strong>, c'est une interface entre composants</td><td>non, ce serait de la cérémonie</td></tr>
+    <tr><td>Changer la forme coûte</td><td>coordonner deux déploiements</td><td>invalidation/versionnement nécessaires ; un ancien format peut casser la lecture</td></tr>
+    <tr><td>Typage utile ?</td><td><strong>oui</strong>, c'est une interface entre composants</td><td>utile si cela protège la reconstruction et les changements de format</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>La règle générale n'est donc pas « toujours typer » ni « toujours
-<code>dict</code> », mais : <strong>un contrat lu par quelqu'un d'autre se type ;
-un détail privé et jetable peut rester opaque.</strong></p>
+<p>Un cache privé peut utiliser un dictionnaire, mais son format reste un contrat. Ici <code>_from_cache</code> indexe des clés et parse une date : un ancien JSON valide mais incompatible provoque une erreur, pas automatiquement un cache miss. Il faut invalider ou versionner les clés lors d’une évolution, ou traiter explicitement un contenu incompatible comme un miss.</p>
 
 <h3 id="et-la-pagination--et-le-tri-">Et la pagination ? Et le tri ?<a class="anchor" href="#et-la-pagination--et-le-tri-" aria-label="Lien vers cette section">#</a></h3>
 
@@ -359,8 +357,7 @@ qui ne grossira jamais, c'est absurde &mdash; et le dire fait partie du cours.</
   <li><strong>Ces deux représentations ont-elles des raisons de changer
       différentes ?</strong> Si le schéma HTTP et le DTO d'entrée changeront
       toujours ensemble et pour la même raison, l'un des deux est du bruit.</li>
-  <li><strong>Y a-t-il un deuxième appelant, réel ou probable ?</strong> Le CLI et
-      le worker de ce projet justifient à eux seuls <code>CreateUserCommand</code> :
+  <li><strong>Y a-t-il un deuxième appelant, réel ou probable ?</strong> L’API et le CLI de ce projet justifient <code>CreateUserCommand</code> :
       sans lui, ils dépendraient d'un objet Pydantic conçu pour HTTP.</li>
   <li><strong>Le domaine a-t-il une forme différente du transport ?</strong>
       <code>User</code> porte des value objects (<code>Email</code>,

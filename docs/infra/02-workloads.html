@@ -112,10 +112,7 @@ workloads qui partagent <strong>la même image</strong>.</p>
 </svg>
 </figure>
 
-<p>Le bénéfice est double : une seule image à construire, charger et scanner ; et
-la <strong>garantie</strong> que l'API, le worker et les migrations exécutent
-exactement le même code. Une divergence de version entre le producteur et le
-consommateur d'un message devient structurellement impossible.</p>
+<p>La même image peut fournir l’API, le worker et les migrations. Cela simplifie la construction, mais <strong>ne garantit pas que tous les pods exécutent la même version à un instant donné</strong> : les rolling updates sont indépendants et le tag <code>latest</code> est mutable. Des tags immuables ou digests et des messages compatibles entre versions restent nécessaires.</p>
 
 <h2 id="durcissement">Durcissement : deux images, deux stratégies<a class="anchor" href="#durcissement" aria-label="Lien vers cette section">#</a></h2>
 
@@ -276,11 +273,10 @@ livenessProbe:
       elles que le HPA utilise comme dénominateur pour calculer un pourcentage
       d'utilisation (<a href="./03-resilience.html">ch. 03</a>). Une request
       fantaisiste donne un autoscaling fantaisiste.</li>
-  <li><strong>Le worker n'a pas de sonde</strong>, et c'est cohérent : il n'expose
-      aucun port. Surveiller un consommateur de file demande autre chose &mdash;
-      la profondeur de la file, l'âge du plus vieux message &mdash; que Kubernetes
-      ne sait pas observer seul.</li>
+  <li>Le worker n’a actuellement aucune sonde. L’absence de port HTTP n’empêche pas une sonde <code>exec</code> ou un heartbeat. La profondeur de la file, l’âge des messages et la présence de consumers complètent ces contrôles ; un processus vivant peut avoir cessé de consommer.</li>
 </ul>
+
+<div class="warn"><strong>Readiness actuelle limitée.</strong> Le manifeste utilise <code>/health</code> pour readiness et liveness ; cette route ne consulte aucune dépendance. Un pod peut donc rester Ready quand PostgreSQL est inaccessible. <code>/ready</code> existe mais exige aussi le cache ; avant de l’utiliser, aligner ce choix avec le repli sans cache de l’application.</div>
 
 <h2 id="images-locales">Des images locales, jamais un registry<a class="anchor" href="#images-locales" aria-label="Lien vers cette section">#</a></h2>
 
@@ -313,7 +309,7 @@ donc de reconstruire l'image &mdash; une contrainte du front, pas du cluster.</p
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 
 <ul>
-  <li>Une <strong>image pour trois rôles</strong> : même code garanti pour l'API,
+  <li>Une <strong>image pour trois rôles</strong> : artefact partagé pour l'API,
       le worker et les migrations.</li>
   <li>Le durcissement va <strong>dans l'image quand c'est possible</strong>, dans le
       manifeste quand il faut rattraper &mdash; et ce qui n'est pas couvert est
@@ -325,8 +321,7 @@ donc de reconstruire l'image &mdash; une contrainte du front, pas du cluster.</p
       <strong>jamais</strong> dans un <code>envFrom</code>.</li>
   <li>Les <code>requests</code> servent de base de calcul au HPA : les choisir au
       hasard, c'est autoscaler au hasard.</li>
-  <li>Images chargées par <code>kind load</code> → <code>imagePullPolicy:
-      IfNotPresent</code> obligatoire.</li>
+  <li>Images préchargées par <code>kind load</code> : utiliser <code>IfNotPresent</code>, ou <code>Never</code> si aucun téléchargement ne doit être tenté.</li>
 </ul>
 
 <nav class="pager">

@@ -340,27 +340,11 @@ class PricingService:
 
 <h2 id="et-les--policies--applicatives-">Et les « policies » applicatives ?<a class="anchor" href="#et-les--policies--applicatives-" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Nuance importante, souvent absente des cours : la couche application n'est pas
-<em>totalement</em> vide de décisions. Elle peut porter des règles qui
-appartiennent au <strong>cas d'usage</strong> plutôt qu'au métier intemporel :</p>
-
-<div class="snippet" data-lang="python"><pre><code>if command.amount &gt; DAILY_TRANSFER_LIMIT:
-    raise DailyTransferLimitExceeded()</code></pre></div>
-
-<p>Un plafond journalier configurable, une limite de pagination, un quota par
-appelant : ce sont des règles de la <em>façon dont on expose</em> le métier, pas
-des invariants d'un objet. Les forcer dans le domaine le pollue ; les nier fait
-mentir le cours.</p>
-
-<p>La formulation honnête est donc :</p>
-
-<blockquote>
-  <p>Le use case ne contient pas les <strong>invariants</strong> du domaine. Il
-  peut contenir la <strong>policy du cas d'usage</strong>.</p>
-</blockquote>
-
-<p>C'est plus long que « l'application ne contient aucune règle », mais c'est
-utilisable pour décider.</p>
+<p>La couche application peut fixer des limites propres au traitement : taille d’un lot, durée maximale d’un export ou pagination. Un exemple illustratif :</p>
+<div class="snippet" data-lang="python"><pre><code>if not 1 &lt;= command.page_size &lt;= 100:
+    raise InvalidPageSize()</code></pre></div>
+<p>En revanche, un <strong>plafond journalier de virement</strong> ou un quota commercial reste une règle métier, même si sa valeur est configurable ou si plusieurs agrégats sont concernés. L’application charge les données nécessaires ; une entité, une policy métier ou un service de domaine prend la décision. Comparer un seul montant au plafond ne suffit pas à contrôler un cumul journalier.</p>
+<blockquote><p>Le critère est la signification de la règle, pas le nombre d’objets consultés ni l’existence d’un paramètre de configuration.</p></blockquote>
 
 <h2 id="le-tableau-de-synthèse">Le tableau de synthèse<a class="anchor" href="#le-tableau-de-synthèse" aria-label="Lien vers cette section">#</a></h2>
 
@@ -390,8 +374,8 @@ utilisable pour décider.</p>
 </blockquote>
 
 <ul>
-  <li><strong>Oui, absolument</strong> → domaine. Elle est constitutive de l'objet.</li>
-  <li><strong>Oui, mais différemment selon le point d'entrée</strong> → application (policy).</li>
+  <li>Oui, parce qu’elle exprime le métier → domaine ; l’application peut devoir charger des données pour l’évaluer.</li>
+  <li>Oui, parce qu’elle limite ou organise le traitement → application. Une règle commune à tous les canaux n’est pas forcément un invariant d’objet.</li>
   <li><strong>Non, c'est propre à ce canal</strong> → adaptateur (schéma HTTP, argument CLI).</li>
 </ul>
 
@@ -409,8 +393,7 @@ fois n'a rien à faire dans le router.</p>
       porte ce qui est <strong>vrai de la technique</strong>.</li>
   <li>Un service de domaine porte une <strong>décision métier</strong> sans
       piloter le workflow ; ici, il est sans état et sans I/O.</li>
-  <li>Une garantie d'unicité se joue à deux niveaux : message côté use case,
-      garantie côté base.</li>
+  <li>Une garantie d’unicité combine vérification applicative, contrainte en base et traduction de la violation par l’adaptateur.</li>
   <li>Test décisif : « si un autre appelant déclenchait ça, la règle
       tiendrait-elle encore ? »</li>
 </ul>

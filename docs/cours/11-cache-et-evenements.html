@@ -156,12 +156,15 @@ await self._cache.delete(f"user:{identity}")</code></pre></div>
       docstring de <code>GetUser</code> : la clé est <code>user:{id}</code>, toute
       mutation doit la supprimer. Un cache sans contrat documenté produit des
       données périmées que personne ne sait expliquer.</li>
-  <li><strong>Invalider plutôt que mettre à jour.</strong> Supprimer la clé est
-      idempotent et sans risque de course ; réécrire la valeur ne l'est pas.</li>
+  <li><strong>Invalider plutôt que réécrire réduit les couplages, mais ne supprime pas les courses.</strong> Une suppression est idempotente ; un lecteur concurrent peut toutefois remettre une ancienne valeur en cache.</li>
   <li><strong>Le cache ne doit jamais être la source de vérité.</strong> S'il est
       vide, froid ou en panne, l'application doit fonctionner &mdash; plus
       lentement, c'est tout.</li>
 </ol>
+
+<div class="warn"><strong>La course de RenameUser.</strong>
+Le use case sauvegarde puis supprime la clé <em>avant</em> le commit de session. Un GET concurrent peut alors lire l’ancien nom en base et le remettre en cache ; après commit, cette valeur reste périmée jusqu’au TTL. Invalider après commit ferme cette fenêtre précise, mais un lecteur ayant commencé avant le commit peut encore publier tardivement une ancienne valeur. Versionnement, coordination des lectures/écritures ou acceptation explicite d’une cohérence à terme sont nécessaires selon le besoin.</div>
+<p>L’adaptateur tolère les erreurs Redis, mais une suppression ratée laisse aussi une ancienne entrée jusqu’à expiration. De plus, <code>/ready</code> exige actuellement que Redis réponde, alors que les lectures savent fonctionner sans cache : ces deux politiques de disponibilité ne sont pas alignées.</p>
 
 <h3 id="cache-ou-query-service-">Cache ou query service ?<a class="anchor" href="#cache-ou-query-service-" aria-label="Lien vers cette section">#</a></h3>
 
@@ -174,7 +177,7 @@ on les confond souvent :</p>
   <tbody>
     <tr><td>Ce qu'il change</td><td>La <strong>forme</strong> de la requête</td><td>Le <strong>nombre</strong> de requêtes</td></tr>
     <tr><td>Coût</td><td>Une classe à écrire</td><td>Une cohérence à gérer</td></tr>
-    <tr><td>Risque</td><td>Aucun (c'est du SQL)</td><td>Données périmées</td></tr>
+    <tr><td>Risque</td><td>Erreurs de requête, d’autorisation ou de performance</td><td>Données périmées</td></tr>
     <tr><td>Quand</td><td>La requête est mal formée</td><td>La requête est bonne mais trop fréquente</td></tr>
   </tbody>
 </table>
@@ -225,10 +228,7 @@ class Task:
         self.completed_at = _now()
         self._events.append(TaskCompleted(task_id=self.id, owner_id=self.owner_id))</code></pre></div>
 
-<p>L'entité <strong>enregistre</strong> l'événement ; elle n'envoie rien elle-même.
-Le use case collecte <code>task.pull_events()</code> après le commit et les
-dispatche. C'est ce qui permet au domaine de dire « ceci s'est produit » sans
-jamais connaître les e-mails, le broker, ni le moindre effet de bord.</p>
+<p>L’entité <strong>enregistre</strong> un fait sans faire d’I/O. Une couche d’orchestration collecte les événements. Des handlers internes peuvent être exécutés avant commit si leurs écritures partagent la transaction ; les effets externes exigent un traitement après commit ou une outbox. Les garder seulement en mémoire après commit laisse une fenêtre de perte en cas de crash.</p>
 
 <h3 id="ce-que-fait-ce-projet">Ce que fait ce projet<a class="anchor" href="#ce-que-fait-ce-projet" aria-label="Lien vers cette section">#</a></h3>
 
@@ -236,11 +236,12 @@ jamais connaître les e-mails, le broker, ni le moindre effet de bord.</p>
 simple pour les justifier. Il a en revanche un vrai <strong>événement
 d'intégration</strong> :</p>
 
-<div class="snippet" data-lang="python"><pre><code># application/shared/messaging.py — le contrat
+<div class="snippet" data-lang="python"><pre><code># application/shared/messaging.py — le contrat de base
 @dataclass(frozen=True, slots=True)
 class IntegrationEvent:
     name: ClassVar[str]            # le TYPE d'événement, pas une clé de routage
 
+# application/task/dto.py — le message concret
 @dataclass(frozen=True, slots=True)
 class ShareTaskNotification(IntegrationEvent):
     name: ClassVar[str] = "task.shared"
@@ -278,14 +279,7 @@ dans le domaine. <code>Task</code> ignore qu'un partage puisse notifier qui que 
 soit &mdash; et c'est la raison pour laquelle le domaine reste testable en
 microsecondes.</p>
 
-<div class="warn">
-  <strong>La limite déjà signalée</strong>
-  (<a href="./08-transactions-et-erreurs.html#les-limites-à-connaître">ch. 08</a>)
-  Ce message part avant le commit. Si la transaction échoue ensuite, un e-mail aura
-  été envoyé pour rien. Le pattern <strong>outbox</strong> &mdash; écrire le message
-  en base dans la même transaction, le publier ensuite depuis un relais &mdash; est
-  la réponse standard. Ne pas l'avoir est un compromis assumé à cette échelle.
-</div>
+<div class="warn"><strong>Limite de la publication directe.</strong> <code>ShareTask</code> ne fait actuellement aucune écriture SQL : le rollback de sa lecture ne supprime pas la tâche déjà persistée. Le double write apparaît si une mutation est ajoutée. Il faudra alors enregistrer l’intention de publication avec cette mutation, par exemple dans une outbox. Le message actuel n’a ni identifiant d’événement ni version explicite ; le contrat doit évoluer avec producteur et consumer.</div>
 
 <h3 id="alors-pourquoi-un-broker-">Alors, pourquoi un broker ?<a class="anchor" href="#alors-pourquoi-un-broker-" aria-label="Lien vers cette section">#</a></h3>
 
@@ -319,10 +313,7 @@ rythme. Le levier est du côté du consommateur, pas de l'API :</p>
 <div class="snippet" data-lang="python"><pre><code># presentation/worker/__main__.py
 await channel.set_qos(prefetch_count=10)</code></pre></div>
 
-<p>Ce <code>prefetch_count</code> plafonne le nombre de messages non acquittés
-qu'un worker accepte de garder en vol. C'est lui, et le nombre de workers, qui
-fixent le débit réel &mdash; pas le trafic entrant. Un pic de partages allonge la
-file, il ne fait pas tomber l'API.</p>
+<p><code>prefetch_count</code> limite les messages non acquittés sur ce consumer. Il ne fixe ni un débit d’e-mails par seconde ni une limite de destinataires par message : le temps de traitement et la concurrence du code comptent aussi. Un partage de 10 000 destinataires reste un message. Respecter le quota d’un fournisseur SMTP exige une limitation de débit dédiée.</p>
 
 <p><strong>2. Rattraper les échecs sans écrire de moteur de retry.</strong> Le
 serveur SMTP est indisponible deux heures. Sans broker, il faut une table
@@ -348,7 +339,7 @@ concurrents entre plusieurs instances. Avec un broker, la redélivrance et la mi
   seul exchange. Deux pièges au passage : le TTL par message expire dans l'ordre
   de la file (un message à 15 min bloque derrière lui un message à 1 min), et il
   faut un compteur de tentatives pour ne pas boucler indéfiniment &mdash; sur une
-  <em>quorum queue</em>, <code>x-delivery-limit</code> le fait pour toi. Ça reste
+  <em>quorum queue</em>, <code>x-delivery-limit</code> limite certaines redélivrances, mais ne borne pas à lui seul une boucle de republication entre files TTL ; celle-ci doit suivre ses tentatives, par exemple via <code>x-death</code>. Ça reste
   bien moins de code qu'une table de retry maison, mais ce n'est pas gratuit.</p>
 </div>
 

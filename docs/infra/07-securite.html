@@ -54,7 +54,7 @@
   <strong>ServiceAccount sans jeton monté</strong>, le namespace applique
   <strong>Pod Security Admission</strong> (<code>baseline</code> imposé,
   <code>restricted</code> en avertissement), et l'<strong>egress</strong> n'est plus
-  libre &mdash; un pod compromis ne peut plus joindre Internet. Le meilleur RBAC est
+  libre &mdash; les quatre workloads ciblés ne peuvent plus ouvrir librement des connexions directes vers Internet. Le meilleur RBAC est
   celui qu'on n'écrit pas.
 </div>
 
@@ -71,19 +71,16 @@ obtient une exécution de code à l'intérieur du conteneur, sans en sortir ?</s
 <table>
   <thead><tr><th>Question</th><th>Réponse avant</th><th>Réponse maintenant</th></tr></thead>
   <tbody>
-    <tr><td>Peut-il parler à l'API Kubernetes ?</td><td>Oui, avec le jeton du ServiceAccount <code>default</code>, monté d'office</td><td>Non : aucun jeton n'est monté</td></tr>
+    <tr><td>Peut-il appeler l’API Kubernetes ?</td><td>Jeton monté par défaut, droits limités par RBAC</td><td>Pas de jeton automatique pour les cinq ServiceAccounts déclarés ; cela ne bloque pas le réseau ni un autre identifiant</td></tr>
     <tr><td>Peut-il déployer un pod privilégié ?</td><td>Rien ne l'en empêchait au niveau du namespace</td><td>Pod Security Admission refuse</td></tr>
-    <tr><td>Peut-il exfiltrer vers Internet ?</td><td>Oui, l'egress était totalement libre</td><td>Non : seules les destinations listées passent</td></tr>
+    <tr><td>Peut-il exfiltrer vers Internet ?</td><td>Oui, l'egress était totalement libre</td><td>Connexions directes limitées pour les pods sélectionnés ; DNS et destinations autorisées restent des canaux possibles</td></tr>
   </tbody>
 </table>
 </div>
 
 <h2 id="serviceaccount">Le ServiceAccount : ne pas monter ce qui ne sert pas<a class="anchor" href="#serviceaccount" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Par défaut, tout pod reçoit le ServiceAccount <code>default</code> de son
-namespace, <strong>et son jeton monté dans le système de fichiers</strong>. Ce jeton
-est un identifiant valide auprès de l'API server. Aucun des workloads de ce dépôt
-n'en a le moindre usage : rien ici ne parle à Kubernetes.</p>
+<p>Les cinq ServiceAccounts applicatifs déclarés dans <code>rbac.yaml</code> n’ont pas besoin d’appeler Kubernetes. Les ressources gérées par les opérateurs suivent leurs propres besoins et permissions. Un jeton permet l’authentification, pas tous les droits : en configuration standard, le ServiceAccount <code>default</code> n’autorise pas à créer des pods privilégiés sans permission RBAC correspondante.</p>
 
 <div class="snippet" data-lang="yaml"><pre><code># k8s/rbac.yaml — une identité par workload, aucun droit accordé
 apiVersion: v1
@@ -123,7 +120,7 @@ rules:
 - apiGroups: [""]
   resources: ["configmaps"]
   resourceNames: ["api-config"]     # nommer la ressource, pas seulement le type
-  verbs: ["get", "watch"]</code></pre></div>
+  verbs: ["get"]</code></pre></div>
 
 <p>Deux réflexes s'y lisent : <code>resourceNames</code> pour ne pas ouvrir toutes
 les ConfigMap du namespace, et un <code>Role</code> (namespacé) plutôt qu'un
@@ -236,15 +233,7 @@ ET (ce namespace <em>et</em> ces pods). Dans deux éléments séparés, ce serai
 &mdash; et la politique autoriserait tout le namespace <code>kube-system</code>.
 UDP <em>et</em> TCP, parce que les réponses DNS volumineuses basculent en TCP.</p>
 
-<div class="note">
-  <strong>Le piège suivant, qui ne se pose pas ici</strong>
-  <p>Si un workload devait parler à l'<strong>API server</strong>, aucun
-  <code>namespaceSelector</code> ne l'atteindrait : l'API server vit <em>hors</em> du
-  CIDR des pods. Il faut un <code>ipBlock</code> sur l'IP du nœud, port 6443. Ce
-  dépôt n'en a pas besoin &mdash; c'est cohérent avec
-  <code>automountServiceAccountToken: false</code> : aucun de ces workloads ne parle
-  à Kubernetes.</p>
-</div>
+<div class="note"><strong>Accès éventuel à l’API server.</strong> Sa topologie et l’ordre de traduction des IP varient selon le cluster et son réseau. Une règle vers l’IP du nœud sur 6443 n’est pas une recette portable : vérifier le Service <code>kubernetes</code>, ses endpoints, le port effectif et le comportement du moteur de politiques avant d’autoriser ce flux.</div>
 
 <h3 id="ce-quon-ne-ferme-pas">Ce qu'on ne ferme volontairement pas<a class="anchor" href="#ce-quon-ne-ferme-pas" aria-label="Lien vers cette section">#</a></h3>
 
@@ -272,9 +261,7 @@ appliquée par le CNI échoue en silence. Les quatre contrôles qui comptent :</
 </table>
 </div>
 
-<p>Le troisième est celui qui compte : c'est la voie d'exfiltration, et elle est
-fermée. Le quatrième confirme que la leçon du chapitre 04 tient toujours &mdash; le
-frontend ne joint jamais la base, ni en entrée ni en sortie.</p>
+<p>Le timeout vers <code>1.1.1.1:443</code> vérifie une connexion directe précise, à condition qu’un contrôle sans restriction démontre que la cible répond. Il ne prouve pas l’impossibilité d’exfiltrer : le DNS autorisé, les services joignables et les réponses HTTP restent des canaux possibles. Les politiques réduisent la surface réseau ; elles ne remplacent pas les contrôles applicatifs.</p>
 
 <h2 id="ce-qui-manque-encore">Ce qui manque encore<a class="anchor" href="#ce-qui-manque-encore" aria-label="Lien vers cette section">#</a></h2>
 
@@ -286,7 +273,7 @@ frontend ne joint jamais la base, ni en entrée ni en sortie.</p>
     <tr><td>Images par <strong>digest</strong></td><td>Deux images en <code>:latest</code> : le déploiement n'est pas reproductible</td></tr>
     <tr><td>Scan de vulnérabilités, SBOM, signature</td><td>Rien ne vérifie ce qui entre dans le cluster</td></tr>
     <tr><td>Secrets chiffrés</td><td><code>secrets.yaml</code> contient des <code>change-me</code> en clair dans git</td></tr>
-    <tr><td>TLS interne</td><td>Tout le trafic est en clair dans le cluster</td></tr>
+    <tr><td>TLS interne</td><td>Pas de chiffrement applicatif systématiquement configuré ; le chiffrement de chaque liaison doit être vérifié</td></tr>
     <tr><td>Egress des pods d'opérateurs</td><td>Le trou assumé décrit plus haut</td></tr>
   </tbody>
 </table>
@@ -303,9 +290,7 @@ frontend ne joint jamais la base, ni en entrée ni en sortie.</p>
       geste le plus rentable du chapitre.</li>
   <li><strong>Le meilleur RBAC est celui qu'on n'écrit pas</strong> : un
       ServiceAccount nommé sans aucun droit n'est pas un travail inachevé.</li>
-  <li>PSA se pilote par des <strong>labels de namespace</strong>. <code>warn</code>
-      donne la liste du travail restant sans rien casser &mdash; c'est par lui qu'on
-      commence, jamais par <code>enforce</code>.</li>
+  <li>Les modes PSA sont indépendants : imposer le profil déjà supporté et utiliser <code>warn</code> pour préparer un profil plus strict. Un nouveau namespace peut directement imposer <code>restricted</code> si tous ses workloads le respectent.</li>
   <li>Une politique d'egress qui oublie le <strong>DNS</strong> casse tout, et le
       symptôme ressemble à une panne de base de données.</li>
   <li>Une politique non testée ne prouve rien : il faut vérifier qu'elle

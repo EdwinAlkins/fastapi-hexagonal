@@ -73,7 +73,7 @@
 <p>Avant de présenter une solution, il faut ressentir le problème. Sinon
 l'architecture ressemble à de la cérémonie gratuite &mdash; et pour un projet
 simple, elle l'est effectivement
-(<a href="./13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">chapitre 11</a>).</p>
+(<a href="./13-demarrer-un-projet.html#quand-ne-pas-utiliser-cette-architecture">chapitre 13</a>).</p>
 
 <h2 id="le-code-qui-paraît-normal">Le code qui paraît normal<a class="anchor" href="#le-code-qui-paraît-normal" aria-label="Lien vers cette section">#</a></h2>
 
@@ -192,13 +192,8 @@ n'est que la machinerie qui rend la réponse à cette question exécutable. Le
 <div class="exercises">
   <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
   <ol>
-    <li>Dans le premier extrait, la vérification <code>payload.title.strip()</code>
-        est faite dans le router. Cite <strong>deux</strong> chemins d'exécution
-        de ce projet qui ne passeraient jamais par ce router &mdash; et pour
-        lesquels la règle serait donc absente.</li>
-    <li>Le premier extrait fait <code>await db.commit()</code> dans le handler.
-        Qu'est-ce que ça rend impossible si demain la création d'une tâche doit
-        aussi débiter un quota utilisateur dans la même opération ?</li>
+    <li>Compare la création d’une tâche par HTTP et par <code>task-manager-cli import-tasks</code>. Pourquoi les deux chemins doivent-ils construire un <code>TaskTitle</code> ? Le worker actuel crée-t-il des tâches ?</li>
+    <li>Le premier extrait fait <code>await db.commit()</code> dans le handler. Si la création doit aussi débiter un quota, où placer le commit pour que les deux écritures restent atomiques ?</li>
   </ol>
   <p class="solutions">&rarr; <a href="./14-annexes.html#chapitre-00">Corrigés</a></p>
 </div>

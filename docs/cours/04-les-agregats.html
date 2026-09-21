@@ -187,11 +187,7 @@ gros).</p>
 </table>
 </div>
 
-<p>Conclusion : <strong>deux agrégats.</strong> La raison de fond n'est pas « on
-référence par identité, c'est la règle » &mdash; c'est que <strong><code>User</code>
-et <code>Task</code> n'ont pas besoin d'être cohérents dans la même
-transaction.</strong> La référence par identité est la <em>conséquence</em> de
-cette frontière, pas sa cause.</p>
+<p>Conclusion : <strong>deux agrégats</strong>. Les transitions d’une tâche n’exigent pas de charger et modifier l’utilisateur avec toutes ses tâches. Il existe néanmoins une règle référentielle entre les deux : le propriétaire doit exister et sa suppression entraîne une cascade en base. Référencer par identité découple les objets ; cela ne supprime ni cette règle ni les choix de concurrence et de persistance.</p>
 
 <figure class="diagram">
 <svg viewBox="0 0 660 200" role="img" xmlns="http://www.w3.org/2000/svg"
@@ -247,13 +243,12 @@ deux réponses, parce que les frontières de cohérence diffèrent.</p>
 <p>Une recommandation fréquente en DDD est de concevoir les cas d'usage pour ne
 modifier <strong>qu'un seul agrégat à la fois</strong>. Ce n'est pas une règle
 officielle gravée quelque part : c'est un conseil de conception destiné à
-préserver les frontières de cohérence. Il a une raison forte : si tu peux modifier
-deux agrégats atomiquement aujourd'hui, ta frontière n'était peut-être pas
+préserver les frontières de cohérence. Il a une raison forte : si tu dois modifier systématiquement deux agrégats atomiquement, ta frontière n'était peut-être pas
 nécessaire &mdash; et surtout, cette habitude ne survit pas au jour où les deux
 agrégats vivent dans deux services ou deux bases.</p>
 
 <p>En pratique, dans un monolithe sur une base unique, modifier deux agrégats dans
-une transaction est courant, techniquement sans risque, et souvent le bon
+une transaction est courant, techniquement possible, et souvent le bon
 compromis. Ce projet l'autorise d'ailleurs : la frontière transactionnelle entoure
 le use case, pas l'agrégat
 (<a href="./08-transactions-et-erreurs.html">ch. 08</a>).</p>
@@ -270,6 +265,9 @@ le use case, pas l'agrégat
 <p>Sache que tu déroges, et pourquoi : le jour où le contexte <code>user</code>
 part dans un autre service, ce sont ces endroits-là qu'il faudra reprendre (avec
 des événements, une cohérence à terme, ou un pattern outbox).</p>
+
+<div class="warn"><strong>Un objet valide ne suffit pas sous concurrence.</strong>
+Deux requêtes peuvent charger la même tâche <code>TODO</code>, appeler chacune <code>complete()</code> et réussir leur garde locale. La transaction seule n’empêche pas cette course. Une version vérifiée à l’UPDATE, un verrou pessimiste ou une mise à jour conditionnelle est nécessaire si une seule transition doit réussir. Le repository actuel ne met pas en œuvre ce contrôle.</div>
 
 <h2 id="lanti-pattern--lagrégat-gigantesque">L'anti-pattern : l'agrégat gigantesque<a class="anchor" href="#lanti-pattern--lagrégat-gigantesque" aria-label="Lien vers cette section">#</a></h2>
 

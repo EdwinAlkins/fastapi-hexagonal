@@ -97,14 +97,13 @@ nier. Ce qu'on achète :</p>
 
 <ul>
   <li>le domaine n'importe pas SQLAlchemy &mdash; sans quoi le contrat
-      <code>forbidden</code> d'import-linter échoue, et surtout tester une règle
-      exigerait un moteur de base ;</li>
+      <code>forbidden</code> d'import-linter échoue, mais un objet ORM peut être instancié et certains comportements testés sans base : le problème ici est le couplage de dépendances ;</li>
   <li>les contraintes de la base (types de colonnes, nullabilité, cascades) ne
       déteignent pas sur le modèle métier ;</li>
   <li>une entité peut être <em>plus riche</em> que sa table : encapsulation, value
       objects, invariants, factories &mdash; choses qu'un modèle déclaratif ORM
       exprime mal ;</li>
-  <li>une migration de schéma ne touche pas au domaine.</li>
+  <li>une migration purement technique peut rester sans effet sur le domaine ; un changement métier peut naturellement toucher les deux.</li>
 </ul>
 
 <p>Si le domaine est un CRUD sans règles, ce coût n'achète rien &mdash; c'est
@@ -294,9 +293,7 @@ async def wrapper(incoming: aio_pika.abc.AbstractIncomingMessage) -&gt; None:
 <p>Il illustre deux choses que l'API ne montre pas :</p>
 
 <ul>
-  <li><strong>une transaction par message</strong>, et non par requête &mdash; même
-      principe, autre déclencheur
-      (<a href="./08-transactions-et-erreurs.html">ch. 08</a>) ;</li>
+  <li>Une session par message. Attention : <code>incoming.process()</code> acquitte le message à sa sortie, <strong>avant</strong> le commit du wrapper. Le use case actuel ne fait que lire la base et envoyer des e-mails. Si on lui ajoutait des écritures, il faudrait déplacer l’ACK après leur commit ; un rollback SQL ne peut annuler un e-mail déjà envoyé.</li>
   <li><strong>la gestion des échecs propre à ce canal</strong> : deux filets de
       sécurité complémentaires alimentent la <em>dead-letter queue</em> &mdash; un
       <code>publish</code> applicatif pour les échecs SMTP <strong>partiels</strong>

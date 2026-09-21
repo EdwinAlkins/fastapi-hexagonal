@@ -175,9 +175,7 @@ async with session_factory() as session:
         await session.rollback()
         raise</code></pre></div>
 
-<p>Trois fois le même schéma, trois cycles de vie différents. <strong>C'est ça, la
-frontière transactionnelle du use case</strong> &mdash; et c'est pour ça qu'il
-faut se méfier des formules qui la collent au protocole.</p>
+<p>Ces trois canaux fournissent une session au traitement, mais le moment de l’accusé de succès diffère. L’API actuelle committe après la réponse ; le CLI après la commande ; le worker acquitte dans <code>process_message</code> avant le commit du wrapper. Ce dernier ne fait actuellement que des lectures SQL. Pour un consumer qui écrit, le commit doit réussir avant l’ACK, puis le traitement doit tolérer une redélivrance.</p>
 
 <div class="table-wrap">
 <table class="table-principe">
@@ -219,16 +217,7 @@ située et unique</strong>, pas la forme exacte.</p>
       La règle «&nbsp;un repository ne committe jamais&nbsp;», elle, ne bouge pas : le
       pouvoir de committer se <strong>demande</strong> par un port, il ne s'obtient pas
       par effet de bord.</li>
-  <li><strong>Un échec au <code>commit</code> arrive trop tard.</strong> Le commit
-      vit dans la <em>fermeture</em> de la dépendance, donc <strong>après</strong> la
-      construction de la réponse. Une contrainte violée à ce moment-là ne devient pas
-      un 500 : mesuré sur ce projet, le client reçoit une réponse <strong>complète et
-      positive</strong> (<code>201</code>, corps JSON valide) pour une transaction
-      annulée, pendant que le serveur logue «&nbsp;Exception in ASGI
-      application&nbsp;». Toute écriture dont une contrainte peut échouer doit donc
-      être poussée plus tôt, par un <code>flush</code> explicite dans l'adaptateur,
-      qui traduit alors l'erreur technique en erreur métier
-      (<a href="./02-ou-vit-une-regle.html#4--e-mail-unique---règle-partagée-entre-application-et-infrastructure">ch. 02</a>).</li>
+  <li><strong>La fin de la dépendance doit précéder l’annonce du succès.</strong> Ici <code>Depends(get_session)</code> garde le scope <code>request</code> : son commit intervient après l’envoi de la réponse. Un <code>flush</code> anticipé permet de traduire certaines contraintes, mais <strong>ne garantit pas le commit</strong> : déconnexion et contraintes différées peuvent encore échouer. Pour les écritures HTTP, il faut une frontière qui committe avant l’envoi, par exemple une dépendance <code>scope="function"</code> avec des providers compatibles. Le streaming doit conserver une session distincte ouverte pendant le flux. Voir les <a href="https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/">scopes FastAPI</a>.</li>
   <li><strong>PgBouncer en mode transaction.</strong> L'infrastructure de ce projet
       impose ses contraintes (pas de <code>LISTEN/NOTIFY</code>, pas de curseur
       <code>WITH HOLD</code>, cache de <em>prepared statements</em> désactivé).</li>
@@ -244,7 +233,7 @@ envoyer un e-mail, publier un message ou appeler une API tierce.</p>
 
 <p>Une seule opération métier, deux systèmes qui ne partagent aucune transaction :</p>
 
-<div class="snippet" data-lang="text"><pre><code>« partager une tâche » =  écrire en base        (PostgreSQL)
+<div class="snippet" data-lang="text"><pre><code>« créer et notifier » =  écrire en base        (PostgreSQL)
                         + publier un message    (RabbitMQ)</code></pre></div>
 
 <p>On ne peut pas les rendre atomiques. Il n'existe que deux ordres possibles, et
@@ -265,13 +254,8 @@ est qu'il n'a <strong>aucune solution par réordonnancement</strong>. Déplacer 
 publication ne fait que choisir quel type de panne on préfère. Il faut changer de
 mécanisme.</p>
 
-<div class="note">
-  <strong>Le choix de ce projet</strong>
-  <code>ShareTask</code> publie, puis la dépendance de session commit. Il préfère
-  donc le message fantôme au message perdu &mdash; ce qui, pour une notification
-  par e-mail, est le bon compromis : un e-mail en trop est gênant, un partage
-  silencieusement non notifié l'est davantage.
-</div>
+<div class="note"><strong>Ce que fait réellement ShareTask.</strong>
+Il vérifie l’existence d’une tâche déjà persistée, puis publie une notification. Il ne crée ni tâche ni enregistrement de partage : ce n’est donc pas actuellement un double write SQL + broker. Un échec de sa transaction de lecture n’efface pas la tâche. Le problème du tableau apparaît dès qu’un futur use case doit enregistrer une mutation et publier ensemble. La suppression concurrente d’une tâche avant sa lecture par le worker est un autre problème, que l’outbox seule ne résout pas.</div>
 
 <h3 id="loutbox--rendre-lintention-transactionnelle">L'outbox : rendre l'intention transactionnelle<a class="anchor" href="#loutbox--rendre-lintention-transactionnelle" aria-label="Lien vers cette section">#</a></h3>
 
@@ -322,44 +306,19 @@ problème, on l'a déplacé chez le voisin.</p>
 
 <h3 id="rendre-un-consommateur-idempotent">Rendre un consommateur idempotent<a class="anchor" href="#rendre-un-consommateur-idempotent" aria-label="Lien vers cette section">#</a></h3>
 
-<p>L'idempotence n'est pas une propriété du message : c'est une propriété du
-<strong>traitement</strong>. Trois techniques, par ordre de préférence.</p>
-
-<p><strong>1. L'opération est naturellement idempotente.</strong> La meilleure
-solution est de ne pas avoir besoin de mécanisme :</p>
-
-<div class="snippet" data-lang="python"><pre><code>task.complete()                 # rejouable : le 2ᵉ appel lève TaskAlreadyCompleted
-counter += 1                    # ❌ NON idempotent
-SET status = 'done'             # ✅ idempotent</code></pre></div>
-
-<p><strong>2. Une table de déduplication</strong>, quand l'effet ne peut pas être
-rendu idempotent (envoyer un e-mail, débiter une carte) :</p>
-
-<div class="snippet" data-lang="python"><pre><code>async def handle(self, message_id: str, event: ShareTaskNotification) -&gt; None:
-    try:
-        await self._processed.record(message_id)   # INSERT, PK = message_id
-    except AlreadyProcessed:
-        return                                     # déjà traité : on acquitte, on sort
-    await self._do_the_work(event)</code></pre></div>
-
-<p>La garantie ne vient pas du code mais de la <strong>contrainte d'unicité en
-base</strong> &mdash; même schéma que pour l'unicité d'e-mail
-(<a href="./02-ou-vit-une-regle.html">ch. 02</a>) : l'application donne le message,
-la base donne la garantie.</p>
-
-<p><strong>3. Une clé métier plutôt qu'un identifiant de message.</strong>
-Dédupliquer sur <code>(task_id, user_id, jour)</code> plutôt que sur un UUID protège
-aussi contre un <em>republish</em> légitime après un changement de code. Plus
-robuste, plus difficile à définir.</p>
-
-<div class="note">
-  <strong>Le piège de l'ordre</strong>
-  Enregistrer le message <em>après</em> le traitement laisse une fenêtre où un crash
-  provoque un doublon. L'enregistrer <em>avant</em> laisse une fenêtre où un crash
-  empêche le traitement. Il n'y a pas d'ordre parfait &mdash; mais « enregistrer
-  d'abord » échoue du bon côté : on perd un traitement, ce qui se détecte et se
-  rejoue, plutôt que d'envoyer deux fois un e-mail, qui ne se reprend pas.
-</div>
+<p><strong>Idempotent</strong> signifie que rejouer le traitement n’ajoute pas d’effet métier. Il faut préciser aussi la réponse au doublon : <code>Task.complete()</code> lève <code>TaskAlreadyCompleted</code> au deuxième appel. Un consumer ne peut l’acquitter comme un succès que si ce comportement est explicitement voulu.</p>
+<p>Pour des effets <strong>dans une même base</strong>, enregistrer l’identifiant du message et appliquer la mutation dans la même transaction :</p>
+<div class="snippet" data-lang="python"><pre><code># Illustratif : ces ports ne sont pas implémentés dans ce dépôt.
+async with uow:
+    inserted = await processed.try_insert(message_id)  # UNIQUE + ON CONFLICT DO NOTHING
+    if inserted:
+        await apply_database_change(event)
+    await uow.commit()
+# L'adaptateur acquitte après le commit.</code></pre></div>
+<p>En cas de crash avant commit, les deux écritures sont annulées ; après commit mais avant ACK, la redélivrance retrouve la clé et n’applique pas l’effet une seconde fois. La clé doit être stable et conservée assez longtemps.</p>
+<div class="warn"><strong>Un e-mail n’appartient pas à la transaction SQL.</strong>
+Enregistrer « traité » avant l’envoi puis crasher peut perdre l’e-mail définitivement : le rejeu sera filtré. Enregistrer après l’envoi laisse une fenêtre de doublon. Aucune préférence d’ordre ne résout cela. Il faut une clé d’idempotence comprise par le service externe, ou une procédure de rapprochement avec un compromis explicite sur pertes et doublons. SMTP seul n’offre pas cette garantie.</div>
+<p>Une clé métier est possible, mais doit identifier une <em>même demande</em> : <code>(task_id, user_id, jour)</code> supprimerait aussi deux partages légitimes le même jour. Le bon choix dépend du besoin, pas du transport.</p>
 
 <h3 id="comment-le-relais-lit-il-loutbox-">Comment le relais lit-il l'outbox ?<a class="anchor" href="#comment-le-relais-lit-il-loutbox-" aria-label="Lien vers cette section">#</a></h3>
 
@@ -368,16 +327,13 @@ robuste, plus difficile à définir.</p>
   <thead><tr><th>Mécanisme</th><th>Latence</th><th>Coût</th><th>Remarque</th></tr></thead>
   <tbody>
     <tr><td><strong>Polling</strong> (<code>SELECT … WHERE published_at IS NULL</code>)</td><td>l'intervalle</td><td>trivial</td><td>Le choix par défaut ; index partiel obligatoire</td></tr>
-    <tr><td><strong><code>LISTEN</code>/<code>NOTIFY</code></strong></td><td>immédiate</td><td>faible</td><td><strong>Indisponible ici</strong> : PgBouncer en mode transaction l'interdit (<a href="../infra/01-donnees.html">infra ch. 01</a>)</td></tr>
+    <tr><td><strong><code>LISTEN</code>/<code>NOTIFY</code></strong></td><td>immédiate</td><td>faible</td><td>LISTEN exige une connexion dédiée hors du pool transactionnel</td></tr>
     <tr><td><strong>CDC</strong> (Debezium, réplication logique)</td><td>quasi immédiate</td><td>élevé</td><td>Un composant de plus à exploiter ; pertinent à grande échelle</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>La deuxième ligne est un bel exemple de ce que le cours répète : une contrainte
-d'infrastructure décidée ailleurs &mdash; le mode transaction du pooler &mdash;
-ferme une option de conception. Sur ce projet, le relais serait forcément un
-<em>poller</em>.</p>
+<p>Un relais peut interroger périodiquement l’outbox ou utiliser <code>LISTEN</code> sur une connexion PostgreSQL directe et dédiée pour être réveillé. <code>NOTIFY</code> peut être émis depuis une transaction passant par PgBouncer. Les notifications ne sont pas un journal durable : le relais relit toujours l’outbox et prévoit un rattrapage après déconnexion.</p>
 
 <h3 id="et-si-plusieurs-agrégats-sont-modifiés-">Et si plusieurs agrégats sont modifiés ?<a class="anchor" href="#et-si-plusieurs-agrégats-sont-modifiés-" aria-label="Lien vers cette section">#</a></h3>
 
@@ -402,10 +358,7 @@ commune disparaît. Deux familles de réponses :</p>
 </table>
 </div>
 
-<p>Une saga ne remplace pas l'outbox : elle a besoin d'une messagerie fiable pour
-enchaîner ses étapes, donc <strong>elle repose dessus</strong>. Les deux patterns
-répondent à des questions différentes &mdash; l'outbox à « comment publier de façon
-fiable ? », la saga à « comment défaire ce qui a déjà réussi ? ».</p>
+<p>Une saga coordonne des transactions locales et leurs compensations, lesquelles peuvent elles-mêmes échouer et demander une reprise. L’outbox est un moyen de fiabiliser les publications d’une saga ; ce n’est pas une dépendance obligatoire de toute implémentation de saga.</p>
 
 <p>Quant au <strong>2PC / XA</strong> (validation en deux phases) : techniquement il
 résout le problème, en pratique il est écarté presque partout. Les brokers modernes
@@ -564,10 +517,7 @@ n'est pas censée le connaître &mdash; et casser immédiatement le CLI et le wo
 
 <h3 id="où-logger-">Où logger ?<a class="anchor" href="#où-logger-" aria-label="Lien vers cette section">#</a></h3>
 
-<p>Corollaire : le <strong>domaine ne logge pas</strong>. Un logger est un effet de
-bord et une dépendance ; le domaine doit rester une fonction pure de ses entrées.
-Les logs appartiennent aux use cases (<code>GetUser</code> trace ses hits/miss de
-cache) et surtout aux adaptateurs, où le contexte technique existe vraiment.</p>
+<p>Dans ce projet, on évite les logs dans le domaine et on journalise aux frontières, où le contexte technique est disponible. Cela n’en fait pas une fonction pure au sens strict : les factories génèrent des identifiants et lisent l’horloge. Une horloge ou un générateur injectés seraient utiles pour maîtriser ces entrées dans des tests plus exigeants.</p>
 
 <h2 id="4-la-composition-root">4. La composition root<a class="anchor" href="#4-la-composition-root" aria-label="Lien vers cette section">#</a></h2>
 
@@ -657,9 +607,7 @@ câblage reste authentique.</p>
 <div class="exercises">
   <h2 id="à-toi-de-jouer">À toi de jouer<a class="anchor" href="#à-toi-de-jouer" aria-label="Lien vers cette section">#</a></h2>
   <ol>
-    <li><code>ShareTask</code> publie un message RabbitMQ <em>avant</em> le commit
-        de la transaction. Décris la séquence exacte qui aboutit à un e-mail envoyé
-        pour une tâche qui n'existe pas en base.</li>
+    <li>Un futur use case crée une tâche puis publie une notification avant le commit. Décris les deux courses possibles avec le worker et explique ce que l’outbox corrige. Pourquoi <code>ShareTask</code>, tel qu’il est écrit aujourd’hui, n’est-il pas cet exemple ?</li>
     <li>Une <code>EmailSendError</code> remonte jusqu'à l'API. Le client reçoit un
         503. Est-ce le bon code si l'adresse du destinataire était simplement mal
         formée &mdash; et où fallait-il traiter ce cas ?</li>

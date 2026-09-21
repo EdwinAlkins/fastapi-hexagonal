@@ -70,7 +70,7 @@
   la protection, et une écriture qui le contourne dépose dans la base des états que
   personne n'a validés. Mais « passer par le domaine » ne veut pas dire « passer par
   le use case de création » : <code>create()</code> sait fabriquer du neuf, pas
-  <strong>reconstituer</strong> de l'existant. Le coût, lui, n'est jamais dans le
+  <strong>reconstituer</strong> de l'existant. Le coût dominant, dans cet exemple, est moins dans le
   domaine &mdash; il est dans les allers-retours. On garde donc les agrégats en
   mémoire et on groupe les I/O.
 </div>
@@ -133,11 +133,7 @@ réconciliation, six mois plus tard.</p>
 
 <h2 id="reconstituer-ce-nest-pas-contourner">Reconstituer, ce n'est pas contourner<a class="anchor" href="#reconstituer-ce-nest-pas-contourner" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Le bon point d'entrée est le <strong>constructeur</strong>, exactement ce que
-fait déjà <code>mappers.to_domain</code> quand il relit une ligne. Et la validation
-ne disparaît pas : le constructeur construit <code>TaskId</code>,
-<code>UserId</code>, <code>TaskTitle</code>, <code>TaskStatus</code> &mdash; un titre
-vide est refusé à l'import comme ailleurs.</p>
+<p>Le mapper SQL utilise actuellement le constructeur brut ; l’import passe par <code>Task.reconstitute</code>. Dans les deux cas, l’appelant construit les value objects. <strong>Le constructeur ne les convertit ni ne les valide automatiquement</strong> : les annotations de types ne sont pas des vérifications à l’exécution. La factory de reconstitution ajoute les contrôles inter-champs détaillés ci-dessous.</p>
 
 <blockquote>
   <p><code>create()</code> + les transitions répondent à «&nbsp;<strong>cet état
@@ -178,16 +174,11 @@ def reconstitute(cls, *, id, owner_id, title, description, status,
         raise InconsistentTaskState("la complétion précède la création")
     return cls(...)</code></pre></div>
 
-<p><code>reconstitute</code> est délibérément <strong>plus stricte que le
-mapper</strong>. <code>to_domain</code> relit <em>notre</em> base, dont nous sommes
-la source de vérité ; un import relit un fichier dont nous ne garantissons rien. La
-même opération technique, deux niveaux de confiance &mdash; et donc deux méthodes.</p>
+<p><code>reconstitute</code> vérifie l’état inter-champs alors que le mapper utilise <code>Task(...)</code>. C’est une limite actuelle : la base ne porte pas de <code>CHECK</code> équivalent sur le statut et les dates. Une écriture SQL ou une ancienne version peut donc produire un état incohérent que le mapper accepte. Une conception plus stricte partagerait cette validation entre toutes les reconstructions, avec une stratégie explicite pour les anciennes données.</p>
 
 <h2 id="où-part-vraiment-le-temps">Où part vraiment le temps<a class="anchor" href="#où-part-vraiment-le-temps" aria-label="Lien vers cette section">#</a></h2>
 
-<p>Pas dans le domaine. Construire 100 000 agrégats avec leurs value objects, c'est
-du CPU pur : de l'ordre de la seconde. Le coût est ailleurs, et il se compte en
-lisant le chemin unitaire :</p>
+<p>La construction des objets coûte du CPU, et son prix dépend de leurs validations. Ici, les allers-retours SQL sont le premier poste à examiner ; cela ne dispense pas de profiler le domaine sur des volumes réels. Le chemin unitaire permet déjà de compter les requêtes :</p>
 
 <div class="table-wrap">
 <table>
@@ -231,8 +222,8 @@ lisant le chemin unitaire :</p>
   <tbody>
     <tr><td>1</td><td>Supprimer le contrôle d'existence ligne à ligne</td><td>N <code>SELECT</code> → 0 ou 1 par lot</td></tr>
     <tr><td>2</td><td>Supprimer la lecture-avant-écriture : à l'import on sait qu'on insère</td><td>N <code>SELECT</code> → 0</td></tr>
-    <tr><td>3</td><td><code>INSERT</code> multi-lignes (<em>insertmanyvalues</em>) par lots</td><td>N <code>INSERT</code> → N/1000</td></tr>
-    <tr><td>4</td><td>Très gros volumes : <code>COPY</code> vers une table de transit, puis <code>INSERT … SELECT</code></td><td>~5–10× sur l'insertion</td></tr>
+    <tr><td>3</td><td>INSERT multi-lignes explicite (<code>pg_insert(...).values([...])</code>) par lots</td><td>N <code>INSERT</code> → N/1000</td></tr>
+    <tr><td>4</td><td>Très gros volumes : <code>COPY</code> vers une table de transit, puis <code>INSERT … SELECT</code></td><td>gain à mesurer</td></tr>
   </tbody>
 </table>
 </div>
@@ -243,12 +234,7 @@ chaque ligne porte son propriétaire &mdash; donc on l'insère avant la tâche e
 question ne se pose plus. Une requête groupée aurait déjà été un progrès ; zéro est
 mieux.</p>
 
-<p>Et un choix des chapitres précédents devient ici un avantage décisif : les
-<strong>identités sont des UUIDv7 générées par le domaine</strong>. Le lot entier se
-construit donc en mémoire avant de toucher la base &mdash; ni <code>RETURNING</code>,
-ni aller-retour pour apprendre un identifiant &mdash; et le préfixe temporel maintient
-les insertions au bord droit de l'index, là où un <code>uuid4()</code> fragmenterait
-le B-tree.</p>
+<p>Dans un import, les identifiants viennent du fichier et sont <strong>conservés</strong> ; ils ne sont pas régénérés. Cela évite un aller-retour pour les obtenir, quel que soit leur format UUID. La localité d’un index dépend aussi de l’ordre du fichier et des données existantes : un import d’anciens UUIDv7 ne garantit pas des insertions au bord droit du B-tree.</p>
 
 <h2 id="on-conflict-et-sa-limite"><code>ON CONFLICT</code> et sa limite<a class="anchor" href="#on-conflict-et-sa-limite" aria-label="Lien vers cette section">#</a></h2>
 
@@ -326,10 +312,7 @@ signifie <code>session.commit()</code>. La règle de dépendance est intacte.</p
       hors adaptateurs driving, à committer, et un use case doit le <strong>demander
       explicitement</strong> par son constructeur. On ne l'obtient jamais par effet de
       bord d'un repository &mdash; ce qui reste la règle du chapitre 08.</li>
-  <li><strong>Il ne se justifie que par la durée.</strong> Un use case qui répond à une
-      requête HTTP n'a aucune raison de le prendre : sa transaction est déjà à la bonne
-      taille. Le port existe parce que le traitement dure, pas parce qu'il écrit
-      beaucoup.</li>
+  <li>La frontière doit correspondre au contrat de l’opération. Un import HTTP pourrait aussi utiliser ce port, mais devrait annoncer ses résultats partiels ; pour un long traitement, le suivi asynchrone rend ce contrat plus facile à exploiter. Ici, seul le CLI expose l’import.</li>
 </ul>
 
 <h3 id="ce-quon-échange">Ce qu'on échange<a class="anchor" href="#ce-quon-échange" aria-label="Lien vers cette section">#</a></h3>
@@ -337,8 +320,7 @@ signifie <code>session.commit()</code>. La règle de dépendance est intacte.</p
 <p>L'import <strong>n'est pas atomique</strong>, et c'est le comportement voulu. On
 échange l'atomicité globale contre la <strong>reprise</strong> &mdash; ce qui n'est
 acceptable que parce que les écritures sont idempotentes. Les deux décisions se
-tiennent : sans idempotence, un import non atomique serait ingérable ; sans découpage,
-l'idempotence serait inutile.</p>
+tiennent : sans idempotence, un import non atomique serait ingérable ; même avec une transaction unique, l’idempotence reste utile si le client ne sait pas si le commit a réussi.</p>
 
 <p>C'est le même raisonnement que l'<em>at-least-once</em> du
 <a href="./11-cache-et-evenements.html">chapitre suivant</a> : on ne cherche pas à
@@ -458,10 +440,7 @@ peu en couche d'accès générique. Le bulk writer est un besoin distinct, il a 
 &mdash; symétrique du query service du
 <a href="./09-lectures-et-query-services.html">chapitre 09</a>.</p>
 
-<p><strong>Une commande CLI, pas une route HTTP.</strong> Un import tient des minutes ;
-une requête HTTP doit rendre la main. C'est l'illustration la plus nette du principe du
-chapitre 08 : la transaction entoure <strong>le use case</strong>, et l'adaptateur
-driving qui la porte n'est pas forcément HTTP.</p>
+<p><strong>L’import est exposé par le CLI.</strong> Ce choix évite les délais d’expiration d’une longue requête HTTP. HTTP n’interdit pas les commits par lots ni les résultats partiels : ce contrat serait à documenter explicitement. Pour de gros fichiers, un déclenchement asynchrone avec <code>202 Accepted</code> et une route de suivi est généralement plus adapté.</p>
 
 <h2 id="à-retenir">À retenir<a class="anchor" href="#à-retenir" aria-label="Lien vers cette section">#</a></h2>
 

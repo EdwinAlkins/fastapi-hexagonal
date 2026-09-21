@@ -179,9 +179,7 @@ owner_id: Mapped[uuid.UUID] = mapped_column(
     ForeignKey("users.id", ondelete="CASCADE"), index=True
 )</code></pre></div>
 
-<p>Le domaine ignore cette clé étrangère : il ne connaît qu'un <code>UserId</code>.
-L'index, lui, n'est pas décoratif &mdash; sans lui, <code>list_by_owner</code>
-fait un <em>seq scan</em> sur toute la table.</p>
+<p>Le domaine ne connaît que <code>UserId</code>. L’index facilite les recherches par propriétaire, sans imposer un plan : PostgreSQL peut choisir un parcours séquentiel pour une petite table ou une requête peu sélective.</p>
 
 <h2 id="qui-vérifie-que-le-user-existe-">Qui vérifie que le user existe ?<a class="anchor" href="#qui-vérifie-que-le-user-existe-" aria-label="Lien vers cette section">#</a></h2>
 
@@ -204,10 +202,7 @@ t'oblige à être explicite :</p>
 
 <div class="snippet" data-lang="python"><pre><code>select(UserModel).options(selectinload(UserModel.tasks))   # 1 requête (+1), pas N</code></pre></div>
 
-<p>Sans ça, afficher 100 users avec leurs tâches déclencherait 101 requêtes : le
-fameux <strong>N+1</strong>. Noter que cette <code>relationship</code> vit dans les
-<strong>modèles ORM</strong>, pas dans le domaine &mdash; c'est un outil de lecture
-de l'infrastructure, pas une navigation d'agrégats.</p>
+<p>En mode synchrone, un chargement paresseux par utilisateur peut produire le N+1. En async, l’accès implicite peut échouer avec <code>MissingGreenlet</code> ; des mécanismes explicites comme <code>AsyncAttrs</code> permettent aussi de déclencher ces I/O. <code>selectinload</code> groupe le chargement, éventuellement en plusieurs lots : deux SELECT est le cas simple, pas une borne universelle.</p>
 
 <h2 id="vue-jointe-en-lecture--query-service">Vue jointe en lecture ? Query service<a class="anchor" href="#vue-jointe-en-lecture--query-service" aria-label="Lien vers cette section">#</a></h2>
 
@@ -334,10 +329,7 @@ la relation ne porte <strong>aucune donnée</strong> propre :</p>
     def __init__(self, ..., tag_ids: set[TagId]) -&gt; None:
         self._tag_ids = tag_ids        # des IDENTITÉS, pas des objets Tag</code></pre></div>
 
-<p><strong>2. Réifier la relation en agrégat</strong> &mdash; dès que la relation
-<strong>porte ses propres attributs</strong>. <code>Student ↔ Course</code> avec
-une date d'inscription et une note n'est pas une association : c'est un concept
-métier que le langage ubiquitaire nomme probablement déjà.</p>
+<p><strong>2. Donner un objet métier à la relation</strong> quand elle porte des données ou un comportement. Une inscription <code>Enrollment</code> peut être une entité avec son propre cycle de vie. En faire un agrégat indépendant demande ensuite de justifier sa frontière de cohérence ; des attributs sur une relation ne suffisent pas à le décider.</p>
 
 <div class="snippet" data-lang="python"><pre><code>class Enrollment:                       # la relation DEVIENT un agrégat
     student_id: StudentId
@@ -373,7 +365,7 @@ ce n'est plus une relation &mdash; c'est un concept.</p>
     <tr><td>1↔1 (2 agrégats)</td><td>un seul côté porte l'ID de l'autre</td><td>FK <code>UNIQUE</code></td></tr>
     <tr><td>1↔1 (en fait 1)</td><td>value object composé dans l'agrégat</td><td>colonnes inline</td></tr>
     <tr><td>n↔n (sans données)</td><td>collection d'<code>Id</code> d'un côté</td><td>table de jointure</td></tr>
-    <tr><td>n↔n (avec données)</td><td>agrégat de relation réifié (<code>Enrollment</code>)</td><td>table-entité</td></tr>
+    <tr><td>n↔n (avec données)</td><td>objet de relation ; agrégat séparé si son autonomie le justifie</td><td>table-entité</td></tr>
   </tbody>
 </table>
 </div>
