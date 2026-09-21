@@ -1,5 +1,25 @@
 # Task Manager — référence FastAPI, hexagonale, DDD & déploiement
 
+[![Cours en ligne](https://img.shields.io/badge/Cours-15%20chapitres-1f6feb?style=flat-square)](https://edwinalkins.github.io/fastapi-hexagonal/cours/index.html)
+[![Publication du site](https://img.shields.io/github/actions/workflow/status/EdwinAlkins/fastapi-hexagonal/pages.yml?branch=main&label=GitHub%20Pages&style=flat-square)](https://github.com/EdwinAlkins/fastapi-hexagonal/actions/workflows/pages.yml)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-green?style=flat-square)](LICENSE)
+
+[![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)](backend/pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/src/task_manager/presentation/api)
+[![SQLAlchemy 2 async](https://img.shields.io/badge/SQLAlchemy-2%20async-D71F00?style=flat-square)](backend/src/task_manager/infrastructure/persistence)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)](docker-compose.yml)
+[![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white)](backend/src/task_manager/presentation/worker)
+[![Valkey](https://img.shields.io/badge/Valkey-cache-1A1A1A?style=flat-square&logo=redis&logoColor=white)](backend/src/task_manager/infrastructure)
+[![Preact](https://img.shields.io/badge/Preact-673AB8?style=flat-square&logo=preact&logoColor=white)](frontend/)
+[![Kubernetes (Kind)](https://img.shields.io/badge/Kubernetes-Kind-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](k8s/README.md)
+[![Agent Skill](https://img.shields.io/badge/Agent%20Skill-Claude%2C%20Codex%2C%20Cursor-8A63D2?style=flat-square)](plugins/fastapi-hexagonal-ddd/README.md)
+
+**📖 Documentation : <https://edwinalkins.github.io/fastapi-hexagonal/>** — le
+cours complet, la section infrastructure et la carte du dépôt, publiés depuis
+[`docs/`](docs/).
+
+---
+
 Dépôt **full-stack** conçu pour servir de **référence** : une application réelle
 (gestionnaire de tâches) illustrant une architecture **hexagonale (ports &
 adapters)**, du **DDD tactique**, des pratiques de **Software Craftsmanship**,
@@ -187,7 +207,7 @@ Principes visibles dans le code :
   `presentation/api/dependencies/`.
 
 Recette pour **démarrer un autre projet** :
-[chapitre 11](backend/docs/cours/11-demarrer-un-projet.md) (y compris *quand ne
+[chapitre 13](backend/docs/cours/13-demarrer-un-projet.md) (y compris *quand ne
 pas* utiliser cette architecture).
 
 ---
@@ -246,7 +266,8 @@ Application : **http://localhost**. Consoles : `mailpit.localhost`,
 `rabbitmq.localhost`, `redisinsight.localhost`, `prometheus.localhost`.
 
 Guide pas à pas, durcissement et backups : [`k8s/README.md`](k8s/README.md).
-Correspondance compose → K8s : [`infra-kind-plan.md`](infra-kind-plan.md).
+Correspondance compose → K8s :
+[section infrastructure](https://edwinalkins.github.io/fastapi-hexagonal/infra/index.html).
 
 Ce n’est **pas** un runbook de production cloud (pas de TLS managé, pas de
 secret store distant). C’est une **cible pédagogique** proche d’une prod
