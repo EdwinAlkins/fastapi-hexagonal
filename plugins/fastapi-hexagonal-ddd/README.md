@@ -96,4 +96,4 @@ public OpenAI — suis [`PUBLIER.md`](PUBLIER.md).
 
 ## Licence
 
-MIT — voir [`LICENSE`](../../LICENSE).
+AGPL-3.0 — voir [`LICENSE`](../../LICENSE).

@@ -2,7 +2,7 @@
 
 [![Cours en ligne](https://img.shields.io/badge/Cours-15%20chapitres-1f6feb?style=flat-square)](https://edwinalkins.github.io/fastapi-hexagonal/cours/index.html)
 [![Publication du site](https://img.shields.io/github/actions/workflow/status/EdwinAlkins/fastapi-hexagonal/pages.yml?branch=main&label=GitHub%20Pages&style=flat-square)](https://github.com/EdwinAlkins/fastapi-hexagonal/actions/workflows/pages.yml)
-[![Licence MIT](https://img.shields.io/badge/licence-MIT-green?style=flat-square)](LICENSE)
+[![Licence AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
 [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square&logo=python&logoColor=white)](backend/pyproject.toml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/src/task_manager/presentation/api)
@@ -335,11 +335,12 @@ Articles / notes annexes (historique du POC) : dossier [`resources/`](resources/
 
 ## Licence
 
-Ce dépôt est sous licence **[MIT](LICENSE)** (copyright William Nauroy, 2026).
+Ce dépôt est sous licence **[GNU AGPL v3](LICENSE)** (copyright William Nauroy, 2026).
 
-MIT convient à un projet de référence : le code et les patterns peuvent être
-réutilisés, y compris dans un produit interne ou commercial, à condition de
-conserver l’avis de copyright dans les copies substantielles.
+Le code peut être étudié, modifié et redistribué, y compris commercialement,
+mais toute version modifiée — distribuée **ou exposée à des utilisateurs via un
+réseau** (SaaS, API) — doit être publiée sous la même licence, avec son code
+source rendu accessible à ces utilisateurs.
 
 Ce n’est pas un produit à déployer tel quel : secrets, durcissement et
 observabilité restent à adapter avant un usage réel.

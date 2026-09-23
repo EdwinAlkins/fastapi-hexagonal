@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/EdwinAlkins/fastapi-hexagonal",
   "repository": "https://github.com/EdwinAlkins/fastapi-hexagonal",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "keywords": [
     "fastapi",
     "python",
